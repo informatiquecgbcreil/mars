@@ -58,3 +58,17 @@ Toute proposition devra faire l’objet d’un échange préalable avec le maint
 ---
 
 Mainteneur : Antoine Vivien
+
+## Vérifications rapides de fiabilité
+
+Pour exécuter un socle de contrôles (boot app, RBAC, endpoint de santé) :
+
+```bash
+python tools/run_reliability_checks.py
+```
+
+Pour inclure la vérification des comptes de test (`admin.test@mars.local`, `directeur.test@mars.local`) :
+
+```bash
+python tools/run_reliability_checks.py --require-test-users
+```
