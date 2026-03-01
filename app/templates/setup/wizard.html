@@ -36,6 +36,41 @@
       <input class="in" type="password" name="admin_password" required>
     </div>
 
+    <h3 style="margin-bottom:0;">3) Email SMTP (optionnel mais recommandé)</h3>
+    <p class="muted" style="margin-top:0;">Permet d’envoyer les emails de récupération de mot de passe.</p>
+    <div class="row">
+      <div>
+        <label>Serveur SMTP</label>
+        <input class="in" name="smtp_host" placeholder="smtp.votre-domaine.fr">
+      </div>
+      <div>
+        <label>Port SMTP</label>
+        <input class="in" type="number" name="smtp_port" placeholder="587" min="1" max="65535">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Utilisateur SMTP (optionnel)</label>
+        <input class="in" name="smtp_username" placeholder="no-reply@association.fr">
+      </div>
+      <div>
+        <label>Mot de passe SMTP (optionnel)</label>
+        <input class="in" type="password" name="smtp_password" autocomplete="new-password">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Adresse expéditeur</label>
+        <input class="in" type="email" name="smtp_sender" placeholder="no-reply@association.fr">
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <label style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <input type="checkbox" name="smtp_use_tls" value="1" checked>
+          Utiliser STARTTLS
+        </label>
+      </div>
+    </div>
+
     <div class="muted" style="font-size:13px;">
       Après validation, vous pourrez tout modifier dans <strong>Administration &gt; Identité app</strong>.
     </div>

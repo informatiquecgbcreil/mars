@@ -81,8 +81,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--email", default="admin@asso.com")
     parser.add_argument("--password", default="admin123!")
-    parser.add_argument("--role", default="admin_tech",
-                        choices=["directrice", "finance", "responsable_secteur", "admin_tech"])
+    parser.add_argument(
+        "--role",
+        default="admin_tech",
+        choices=["direction", "directrice", "directeur", "finance", "responsable_secteur", "admin_tech"],
+    )
     parser.add_argument("--nom", default="Admin Test")
     parser.add_argument("--secteur", default=None)
     args = parser.parse_args()
@@ -103,10 +106,16 @@ def main():
         ensure_db_is_sane()
 
         # 4) Crée/répare le user
+        role_aliases = {
+            "directrice": "direction",
+            "directeur": "direction",
+        }
+        role_code = role_aliases.get(args.role, args.role)
+
         u, created = ensure_user(
             email=args.email,
             password=args.password,
-            role_code=args.role,
+            role_code=role_code,
             nom=args.nom,
             secteur=args.secteur,
         )

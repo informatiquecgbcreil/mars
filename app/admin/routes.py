@@ -354,11 +354,33 @@ def instance_settings():
         app_name = (request.form.get("app_name") or "").strip()
         org_name = (request.form.get("organization_name") or "").strip()
 
+        smtp_host = (request.form.get("smtp_host") or "").strip() or None
+        smtp_port_raw = (request.form.get("smtp_port") or "").strip()
+        smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else None
+        smtp_username = (request.form.get("smtp_username") or "").strip() or None
+        smtp_password = (request.form.get("smtp_password") or "").strip() or None
+        smtp_sender = (request.form.get("smtp_sender") or "").strip() or None
+        smtp_use_tls = request.form.get("smtp_use_tls") in {"1", "true", "on", "yes", "YES"}
+
+        if smtp_host and (not smtp_port or smtp_port <= 0):
+            flash("Port SMTP invalide.", "danger")
+            return redirect(url_for("admin.instance_settings"))
+        if smtp_host and not smtp_sender:
+            flash("Adresse expéditeur SMTP requise.", "danger")
+            return redirect(url_for("admin.instance_settings"))
+
         if not row.id:
             db.session.add(row)
 
         row.app_name = app_name or None
         row.organization_name = org_name or None
+        row.smtp_host = smtp_host
+        row.smtp_port = smtp_port
+        row.smtp_username = smtp_username
+        if smtp_password:
+            row.smtp_password = smtp_password
+        row.smtp_sender = smtp_sender
+        row.smtp_use_tls = smtp_use_tls if smtp_host else None
 
         logo_dir = ensure_upload_subdir("branding")
 
