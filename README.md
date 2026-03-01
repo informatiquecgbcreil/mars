@@ -72,3 +72,19 @@ Pour inclure la vérification des comptes de test (`admin.test@mars.local`, `dir
 ```bash
 python tools/run_reliability_checks.py --require-test-users
 ```
+
+Pour inclure aussi le test des routes de récupération de mot de passe :
+
+```bash
+python tools/run_reliability_checks.py --require-test-users --check-password-reset
+```
+
+
+## Récupération de mot de passe
+
+Les utilisateurs peuvent désormais demander un lien de réinitialisation depuis l'écran de connexion via **Mot de passe oublié ?**.
+
+- Route de demande: `/password-reset`
+- Route de réinitialisation: `/password-reset/<token>`
+- Le lien expire automatiquement (configurable via `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS`).
+

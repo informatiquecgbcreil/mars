@@ -77,3 +77,7 @@ class Config:
     DB_AUTO_UPGRADE_ON_START = os.environ.get("DB_AUTO_UPGRADE_ON_START", "1") in {"1", "true", "True", "yes", "YES"}
     DB_ENABLE_LEGACY_SCHEMA_PATCH = os.environ.get("DB_ENABLE_LEGACY_SCHEMA_PATCH", "0") in {"1", "true", "True", "yes", "YES"}
 
+    # Réinitialisation mot de passe
+    PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS = int(os.environ.get("PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS", "3600"))
+    PASSWORD_RESET_ALLOW_DEBUG_LINK = os.environ.get("PASSWORD_RESET_ALLOW_DEBUG_LINK", "1") in {"1", "true", "True", "yes", "YES"}
+
