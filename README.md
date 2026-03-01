@@ -84,6 +84,9 @@ python tools/run_reliability_checks.py --require-test-users --check-password-res
 
 Les utilisateurs peuvent désormais demander un lien de réinitialisation depuis l'écran de connexion via **Mot de passe oublié ?**.
 
+
+Pendant la première installation (`/setup`), vous pouvez aussi renseigner le SMTP (hôte, port, expéditeur, TLS) pour activer immédiatement les emails de récupération.
+
 - Route de demande: `/password-reset`
 - Route de réinitialisation: `/password-reset/<token>`
 - Le lien expire automatiquement (configurable via `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS`).

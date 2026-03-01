@@ -7,6 +7,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.extensions import db
 from app.models import User
+from app.services.instance_settings import resolve_mail_settings
 
 bp = Blueprint("auth", __name__)
 
@@ -44,8 +45,9 @@ def _load_password_reset_user(token: str) -> User | None:
 
 
 def _send_password_reset_email(to_email: str, reset_link: str) -> bool:
-    host = (current_app.config.get("MAIL_HOST") or "").strip()
-    sender = (current_app.config.get("MAIL_SENDER") or "").strip()
+    mail_cfg = resolve_mail_settings(current_app.config)
+    host = mail_cfg["host"]
+    sender = mail_cfg["sender"]
     if not host or not sender:
         return False
 
@@ -61,10 +63,10 @@ def _send_password_reset_email(to_email: str, reset_link: str) -> bool:
         "Si vous n'êtes pas à l'origine de cette demande, ignorez ce message.\n"
     )
 
-    port = int(current_app.config.get("MAIL_PORT", 587))
-    use_tls = bool(current_app.config.get("MAIL_USE_TLS", True))
-    username = (current_app.config.get("MAIL_USERNAME") or "").strip()
-    password = current_app.config.get("MAIL_PASSWORD") or ""
+    port = int(mail_cfg["port"])
+    use_tls = bool(mail_cfg["use_tls"])
+    username = (mail_cfg["username"] or "").strip()
+    password = mail_cfg["password"] or ""
 
     server = smtplib.SMTP(host, port)
     try:
