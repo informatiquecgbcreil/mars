@@ -20,6 +20,7 @@ class Config:
         DEFAULT_SECRET_KEY,
     )
     MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))
+    WTF_CSRF_TIME_LIMIT = int(os.environ.get("WTF_CSRF_TIME_LIMIT", str(8 * 60 * 60)))
 
     # --- DB -----------------------------------------------------------------
     # Objectif :

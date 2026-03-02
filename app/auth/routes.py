@@ -72,15 +72,31 @@ def _send_password_reset_email(to_email: str, reset_link: str) -> bool:
 
     server = None
     try:
-        server = smtplib.SMTP(host, port, timeout=smtp_timeout)
-        if use_tls:
-            server.starttls(timeout=smtp_timeout)
+        # Compat fournisseurs: 465 = SSL implicite (SMTPS), 587 = STARTTLS explicite.
+        use_ssl_implicit = (port == 465)
+        if use_ssl_implicit:
+            server = smtplib.SMTP_SSL(host, port, timeout=smtp_timeout)
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(host, port, timeout=smtp_timeout)
+            server.ehlo()
+            if use_tls:
+                server.starttls(timeout=smtp_timeout)
+                server.ehlo()
+
         if username and password:
             server.login(username, password)
         server.send_message(msg)
         return True
     except (OSError, smtplib.SMTPException, SocketTimeout) as exc:
-        current_app.logger.warning("Password reset email send failed: %s", exc)
+        current_app.logger.warning(
+            "Password reset email send failed (host=%s port=%s tls=%s ssl_implicit=%s): %s",
+            host,
+            port,
+            use_tls,
+            (port == 465),
+            exc,
+        )
         return False
     finally:
         if server is not None:

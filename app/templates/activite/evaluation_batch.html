@@ -20,7 +20,10 @@
             <tr>
               <th>Participant</th>
               {% for c in competences %}
-                <th title="{{ c.nom }}">{{ c.code }}</th>
+                <th title="{{ c.code or '' }}">
+                  <div>{{ c.nom or c.code }}</div>
+                  {% if c.code %}<div class="muted" style="font-size:12px;">{{ c.code }}</div>{% endif %}
+                </th>
               {% endfor %}
             </tr>
           </thead>

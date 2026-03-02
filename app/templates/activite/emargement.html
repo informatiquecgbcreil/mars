@@ -235,7 +235,7 @@
               <button type="button" class="btn" data-bs-dismiss="modal">Fermer</button>
             </div>
             <div class="modal-body">
-              <form method="post" id="bulkEvalForm">
+              <form method="post" id="bulkEvalForm" action="{{ url_for('activite.emargement', session_id=session.id) }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="action" value="bulk_eval_selected">
 
