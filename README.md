@@ -91,4 +91,5 @@ Pendant la première installation (`/setup`), vous pouvez aussi renseigner le SM
 - Route de réinitialisation: `/password-reset/<token>`
 - Le lien expire automatiquement (configurable via `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS`).
 - L'envoi SMTP est borné dans le temps pour éviter les pages bloquées (`MAIL_TIMEOUT_SECONDS`, défaut 10s).
+- Compat SMTP: le port **465** est traité en SSL implicite (SMTPS), le port **587** en STARTTLS.
 
