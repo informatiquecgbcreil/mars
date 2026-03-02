@@ -18,12 +18,27 @@ def wizard():
         admin_email = (request.form.get("admin_email") or "").strip().lower()
         admin_password = (request.form.get("admin_password") or "").strip()
 
+        smtp_host = (request.form.get("smtp_host") or "").strip() or None
+        smtp_port_raw = (request.form.get("smtp_port") or "").strip()
+        smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else None
+        smtp_username = (request.form.get("smtp_username") or "").strip() or None
+        smtp_password = (request.form.get("smtp_password") or "").strip() or None
+        smtp_use_tls = request.form.get("smtp_use_tls") in {"1", "true", "on", "yes", "YES"}
+        smtp_sender = (request.form.get("smtp_sender") or "").strip() or None
+
         if not admin_email or "@" not in admin_email:
             flash("Veuillez saisir un email admin valide.", "danger")
             return render_template("setup/wizard.html")
 
         if len(admin_password) < 8:
             flash("Le mot de passe admin doit contenir au moins 8 caractères.", "danger")
+            return render_template("setup/wizard.html")
+
+        if smtp_host and (not smtp_port or smtp_port <= 0):
+            flash("Port SMTP invalide. Exemple: 587.", "danger")
+            return render_template("setup/wizard.html")
+        if smtp_host and not smtp_sender:
+            flash("Veuillez indiquer une adresse expéditeur SMTP.", "danger")
             return render_template("setup/wizard.html")
 
         bootstrap_rbac()
@@ -33,6 +48,13 @@ def wizard():
             db.session.add(settings)
         settings.app_name = app_name or None
         settings.organization_name = org_name or None
+
+        settings.smtp_host = smtp_host
+        settings.smtp_port = smtp_port
+        settings.smtp_username = smtp_username
+        settings.smtp_password = smtp_password
+        settings.smtp_use_tls = smtp_use_tls if smtp_host else None
+        settings.smtp_sender = smtp_sender
 
         u = User(email=admin_email, nom=admin_name)
         u.set_password(admin_password)

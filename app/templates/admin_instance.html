@@ -35,8 +35,42 @@
       </div>
     </div>
 
+    <h3 style="margin-bottom:0;">SMTP (emails de récupération de mot de passe)</h3>
+    <div class="row">
+      <div>
+        <label>Serveur SMTP</label>
+        <input class="in" name="smtp_host" value="{{ settings.smtp_host or '' }}" placeholder="smtp.votre-domaine.fr">
+      </div>
+      <div>
+        <label>Port SMTP</label>
+        <input class="in" type="number" name="smtp_port" min="1" max="65535" value="{{ settings.smtp_port or '' }}" placeholder="587">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Utilisateur SMTP</label>
+        <input class="in" name="smtp_username" value="{{ settings.smtp_username or '' }}" placeholder="no-reply@association.fr">
+      </div>
+      <div>
+        <label>Nouveau mot de passe SMTP (laisser vide pour conserver l’actuel)</label>
+        <input class="in" type="password" name="smtp_password" autocomplete="new-password">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Adresse expéditeur</label>
+        <input class="in" type="email" name="smtp_sender" value="{{ settings.smtp_sender or '' }}" placeholder="no-reply@association.fr">
+      </div>
+      <div style="display:flex; align-items:flex-end;">
+        <label style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+          <input type="checkbox" name="smtp_use_tls" value="1" {% if settings.smtp_use_tls is not sameas false %}checked{% endif %}>
+          Utiliser STARTTLS
+        </label>
+      </div>
+    </div>
+
     <div class="muted" style="font-size:13px;">
-      Astuce: vous pouvez revenir ici à tout moment pour modifier les noms et logos.
+      Astuce: vous pouvez revenir ici à tout moment pour modifier les noms, logos et SMTP.
     </div>
 
     <div style="text-align:right;">

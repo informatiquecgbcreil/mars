@@ -118,6 +118,40 @@ def _safe_unlink(path: str | None) -> None:
         pass
 
 
+def _sort_competences(items):
+    return sorted(items, key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()))
+
+
+def _collect_session_competences(session: SessionActivite, session_objectifs: list[Objectif] | None = None):
+    """Retourne les compétences de session via 3 sources fusionnées:
+
+    1) compétences explicitement liées à la session,
+    2) compétences des modules liés à la session,
+    3) compétences des objectifs opérationnels de session.
+
+    Cette fusion évite le bug où l'évaluation affiche "Aucune compétence"
+    alors que des modules ont bien été sélectionnés.
+    """
+    by_id = {}
+
+    for comp in (getattr(session, "competences", []) or []):
+        by_id[comp.id] = comp
+
+    for module in (getattr(session, "modules", []) or []):
+        for comp in (getattr(module, "competences", []) or []):
+            by_id[comp.id] = comp
+
+    objectifs = session_objectifs
+    if objectifs is None:
+        objectifs = Objectif.query.filter_by(session_id=session.id, type="operationnel").all()
+
+    for obj in objectifs:
+        for comp in (getattr(obj, "competences", []) or []):
+            by_id[comp.id] = comp
+
+    return _sort_competences(list(by_id.values()))
+
+
 def _ensure_month_capacity(atelier: AtelierActivite, session: SessionActivite) -> None:
     """Crée la capacité mensuelle si elle n'existe pas (ateliers INDIVIDUEL_MENSUEL)."""
     if atelier.type_atelier != "INDIVIDUEL_MENSUEL":
@@ -801,7 +835,7 @@ def evaluation_batch(session_id: int):
 
     presences = PresenceActivite.query.filter_by(session_id=session_id).all()
     participants = [p.participant for p in presences]
-    competences = list(getattr(s, "competences", []) or [])
+    competences = _collect_session_competences(s)
 
     if request.method == "POST":
         eval_date = s.rdv_date or s.date_session or date.today()
@@ -994,8 +1028,7 @@ def emargement(session_id: int):
 
         if action == "bulk_validate":
             eval_date = s.rdv_date or s.date_session or date.today()
-            session_objectifs = Objectif.query.filter_by(session_id=s.id, type="operationnel").all()
-            session_competences = {comp for obj in session_objectifs for comp in obj.competences}
+            session_competences = _collect_session_competences(s)
             presences = PresenceActivite.query.filter_by(session_id=session_id).all()
             for pr in presences:
                 for comp in session_competences:
@@ -1153,16 +1186,10 @@ def emargement(session_id: int):
     session_objectifs = Objectif.query.filter_by(session_id=s.id, type="operationnel").order_by(Objectif.created_at.asc()).all()
     objectifs_payload = []
     for obj in session_objectifs:
-        competences = sorted(
-            obj.competences,
-            key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()),
-        )
+        competences = _sort_competences(obj.competences)
         objectifs_payload.append({"objectif": obj, "competences": competences})
 
-    session_competences = sorted(
-        {comp for payload in objectifs_payload for comp in payload["competences"]},
-        key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()),
-    )
+    session_competences = _collect_session_competences(s, session_objectifs=session_objectifs)
 
     evaluations = Evaluation.query.filter_by(session_id=s.id).all()
     evaluation_map = {(e.participant_id, e.competence_id): e for e in evaluations}
