@@ -17,6 +17,15 @@ def wizard():
         admin_name = (request.form.get("admin_name") or "").strip() or "Admin"
         admin_email = (request.form.get("admin_email") or "").strip().lower()
         admin_password = (request.form.get("admin_password") or "").strip()
+        public_base_url = (request.form.get("public_base_url") or "").strip() or None
+
+        smtp_host = (request.form.get("smtp_host") or "").strip() or None
+        smtp_port_raw = (request.form.get("smtp_port") or "").strip()
+        smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else None
+        smtp_username = (request.form.get("smtp_username") or "").strip() or None
+        smtp_password = (request.form.get("smtp_password") or "").strip() or None
+        smtp_use_tls = request.form.get("smtp_use_tls") in {"1", "true", "on", "yes", "YES"}
+        smtp_sender = (request.form.get("smtp_sender") or "").strip() or None
 
         smtp_host = (request.form.get("smtp_host") or "").strip() or None
         smtp_port_raw = (request.form.get("smtp_port") or "").strip()
@@ -48,6 +57,14 @@ def wizard():
             db.session.add(settings)
         settings.app_name = app_name or None
         settings.organization_name = org_name or None
+        settings.public_base_url = public_base_url
+
+        settings.smtp_host = smtp_host
+        settings.smtp_port = smtp_port
+        settings.smtp_username = smtp_username
+        settings.smtp_password = smtp_password
+        settings.smtp_use_tls = smtp_use_tls if smtp_host else None
+        settings.smtp_sender = smtp_sender
 
         settings.smtp_host = smtp_host
         settings.smtp_port = smtp_port

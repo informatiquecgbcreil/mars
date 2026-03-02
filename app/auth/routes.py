@@ -9,7 +9,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.extensions import db
 from app.models import User
-from app.services.instance_settings import resolve_mail_settings
+from app.services.instance_settings import resolve_mail_settings, resolve_public_base_url
 
 bp = Blueprint("auth", __name__)
 
@@ -54,10 +54,15 @@ def _build_external_reset_link(token: str) -> str:
     Priorité à PUBLIC_BASE_URL (ex: http://192.168.1.10:8000)
     puis fallback sur url_for(..., _external=True).
     """
-    public_base_url = (current_app.config.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    public_base_url = resolve_public_base_url(current_app.config)
     reset_path = url_for("auth.password_reset_token", token=token)
     if public_base_url:
         return urljoin(public_base_url + "/", reset_path.lstrip("/"))
+
+    request_base = (request.host_url or "").strip().rstrip("/")
+    if request_base:
+        return urljoin(request_base + "/", reset_path.lstrip("/"))
+
     return url_for("auth.password_reset_token", token=token, _external=True)
 
 def _send_password_reset_email(to_email: str, reset_link: str) -> bool:

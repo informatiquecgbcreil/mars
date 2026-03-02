@@ -49,3 +49,11 @@ def resolve_mail_settings(config: dict) -> dict:
         "use_tls": use_tls,
         "sender": sender,
     }
+
+
+def resolve_public_base_url(config: dict) -> str:
+    """Retourne l'URL publique de l'application (DB prioritaire, fallback env)."""
+    row = InstanceSettings.query.first()
+    if row and (row.public_base_url or '').strip():
+        return row.public_base_url.strip().rstrip('/')
+    return (config.get('PUBLIC_BASE_URL') or '').strip().rstrip('/')

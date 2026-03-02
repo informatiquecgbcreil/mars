@@ -144,6 +144,7 @@ class InstanceSettings(db.Model):
     organization_name = db.Column(db.String(180), nullable=True)
     app_logo_path = db.Column(db.String(255), nullable=True)
     organization_logo_path = db.Column(db.String(255), nullable=True)
+    public_base_url = db.Column(db.String(255), nullable=True)
 
     # SMTP (override optionnel des variables d'environnement)
     smtp_host = db.Column(db.String(255), nullable=True)

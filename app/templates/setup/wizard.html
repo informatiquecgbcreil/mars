@@ -36,7 +36,14 @@
       <input class="in" type="password" name="admin_password" required>
     </div>
 
-    <h3 style="margin-bottom:0;">3) Email SMTP (optionnel mais recommandé)</h3>
+    <h3 style="margin-bottom:0;">3) URL publique de l'application</h3>
+    <p class="muted" style="margin-top:0;">Utilisée dans les emails (réinitialisation mot de passe). Exemple: <code>http://192.168.1.42:8000</code>.</p>
+    <div>
+      <label>URL publique (optionnel, recommandé en réseau local)</label>
+      <input class="in" name="public_base_url" placeholder="http://192.168.1.42:8000">
+    </div>
+
+    <h3 style="margin-bottom:0;">4) Email SMTP (optionnel mais recommandé)</h3>
     <p class="muted" style="margin-top:0;">Permet d’envoyer les emails de récupération de mot de passe.</p>
     <div class="row">
       <div>

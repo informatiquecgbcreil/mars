@@ -35,6 +35,13 @@
       </div>
     </div>
 
+    <h3 style="margin-bottom:0;">URL publique</h3>
+    <div>
+      <label>Base URL publique de l'application</label>
+      <input class="in" name="public_base_url" value="{{ settings.public_base_url or '' }}" placeholder="http://192.168.1.42:8000">
+      <div class="muted">Utilisée pour générer les liens email accessibles depuis d'autres postes.</div>
+    </div>
+
     <h3 style="margin-bottom:0;">SMTP (emails de récupération de mot de passe)</h3>
     <div class="row">
       <div>
