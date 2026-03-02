@@ -118,6 +118,40 @@ def _safe_unlink(path: str | None) -> None:
         pass
 
 
+def _sort_competences(items):
+    return sorted(items, key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()))
+
+
+def _collect_session_competences(session: SessionActivite, session_objectifs: list[Objectif] | None = None):
+    """Retourne les compétences de session via 3 sources fusionnées:
+
+    1) compétences explicitement liées à la session,
+    2) compétences des modules liés à la session,
+    3) compétences des objectifs opérationnels de session.
+
+    Cette fusion évite le bug où l'évaluation affiche "Aucune compétence"
+    alors que des modules ont bien été sélectionnés.
+    """
+    by_id = {}
+
+    for comp in (getattr(session, "competences", []) or []):
+        by_id[comp.id] = comp
+
+    for module in (getattr(session, "modules", []) or []):
+        for comp in (getattr(module, "competences", []) or []):
+            by_id[comp.id] = comp
+
+    objectifs = session_objectifs
+    if objectifs is None:
+        objectifs = Objectif.query.filter_by(session_id=session.id, type="operationnel").all()
+
+    for obj in objectifs:
+        for comp in (getattr(obj, "competences", []) or []):
+            by_id[comp.id] = comp
+
+    return _sort_competences(list(by_id.values()))
+
+
 def _ensure_month_capacity(atelier: AtelierActivite, session: SessionActivite) -> None:
     """Crée la capacité mensuelle si elle n'existe pas (ateliers INDIVIDUEL_MENSUEL)."""
     if atelier.type_atelier != "INDIVIDUEL_MENSUEL":
@@ -156,11 +190,14 @@ def index():
     secteur = _user_secteur()
     _ensure_seed_ateliers(secteur)
     corbeille = (request.args.get("corbeille") == "1")
+    show_inactive = (request.args.get("inactifs") == "1")
     q = AtelierActivite.query.filter_by(secteur=secteur)
     if corbeille:
         q = q.filter(AtelierActivite.is_deleted.is_(True))
     else:
         q = q.filter(AtelierActivite.is_deleted.is_(False))
+        if not show_inactive:
+            q = q.filter(AtelierActivite.is_active.is_(True))
     ateliers = q.order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/index.html",
@@ -168,6 +205,7 @@ def index():
         ateliers=ateliers,
         is_admin_global=_is_admin_global(),
         corbeille=corbeille,
+        show_inactive=show_inactive,
     )
 
 
@@ -375,6 +413,8 @@ def atelier_new():
         heures_dispo_defaut_mois = request.form.get("heures_dispo_defaut_mois") or None
 
         motifs = [m.strip() for m in (request.form.get("motifs") or "").split(";") if m.strip()]
+        is_active = request.form.get("is_active") in {"1", "true", "on", "yes", "YES"}
+        continuity_parent_id = request.form.get("continuity_parent_id", type=int)
         motifs_json = None
         if motifs:
             import json as _json
@@ -389,6 +429,8 @@ def atelier_new():
             heures_dispo_defaut_mois=float(heures_dispo_defaut_mois) if heures_dispo_defaut_mois else None,
             duree_defaut_minutes=int(duree_defaut_minutes) if duree_defaut_minutes else None,
             motifs_json=motifs_json,
+            is_active=is_active,
+            continuity_parent_id=continuity_parent_id,
         )
         competence_ids = [int(cid) for cid in request.form.getlist("competence_ids") if cid.isdigit()]
         if competence_ids:
@@ -399,12 +441,14 @@ def atelier_new():
         return redirect(url_for("activite.index"))
 
     referentiels = _load_referentiels()
+    ateliers_continuite = AtelierActivite.query.filter(AtelierActivite.secteur == secteur, AtelierActivite.is_deleted.is_(False)).order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/atelier_form.html",
         secteur=secteur,
         atelier=None,
         referentiels=referentiels,
         selected_competences=set(),
+        ateliers_continuite=ateliers_continuite,
     )
 
 
@@ -435,6 +479,12 @@ def atelier_edit(atelier_id: int):
         atelier.heures_dispo_defaut_mois = float(heures_dispo_defaut_mois) if heures_dispo_defaut_mois else None
 
         motifs = [m.strip() for m in (request.form.get("motifs") or "").split(";") if m.strip()]
+        is_active = request.form.get("is_active") in {"1", "true", "on", "yes", "YES"}
+        continuity_parent_id = request.form.get("continuity_parent_id", type=int)
+        if continuity_parent_id == atelier.id:
+            continuity_parent_id = None
+        atelier.is_active = is_active
+        atelier.continuity_parent_id = continuity_parent_id
         if motifs:
             import json as _json
             atelier.motifs_json = _json.dumps(motifs, ensure_ascii=False)
@@ -454,6 +504,7 @@ def atelier_edit(atelier_id: int):
     motifs_str = "; ".join(atelier.motifs() or [])
     referentiels = _load_referentiels()
     selected_competences = {c.id for c in atelier.competences}
+    ateliers_continuite = AtelierActivite.query.filter(AtelierActivite.secteur == secteur, AtelierActivite.is_deleted.is_(False), AtelierActivite.id != atelier.id).order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/atelier_form.html",
         secteur=secteur,
@@ -461,6 +512,7 @@ def atelier_edit(atelier_id: int):
         motifs_str=motifs_str,
         referentiels=referentiels,
         selected_competences=selected_competences,
+        ateliers_continuite=ateliers_continuite,
     )
 
 
@@ -801,7 +853,7 @@ def evaluation_batch(session_id: int):
 
     presences = PresenceActivite.query.filter_by(session_id=session_id).all()
     participants = [p.participant for p in presences]
-    competences = list(getattr(s, "competences", []) or [])
+    competences = _collect_session_competences(s)
 
     if request.method == "POST":
         eval_date = s.rdv_date or s.date_session or date.today()
@@ -994,8 +1046,7 @@ def emargement(session_id: int):
 
         if action == "bulk_validate":
             eval_date = s.rdv_date or s.date_session or date.today()
-            session_objectifs = Objectif.query.filter_by(session_id=s.id, type="operationnel").all()
-            session_competences = {comp for obj in session_objectifs for comp in obj.competences}
+            session_competences = _collect_session_competences(s)
             presences = PresenceActivite.query.filter_by(session_id=session_id).all()
             for pr in presences:
                 for comp in session_competences:
@@ -1153,16 +1204,10 @@ def emargement(session_id: int):
     session_objectifs = Objectif.query.filter_by(session_id=s.id, type="operationnel").order_by(Objectif.created_at.asc()).all()
     objectifs_payload = []
     for obj in session_objectifs:
-        competences = sorted(
-            obj.competences,
-            key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()),
-        )
+        competences = _sort_competences(obj.competences)
         objectifs_payload.append({"objectif": obj, "competences": competences})
 
-    session_competences = sorted(
-        {comp for payload in objectifs_payload for comp in payload["competences"]},
-        key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()),
-    )
+    session_competences = _collect_session_competences(s, session_objectifs=session_objectifs)
 
     evaluations = Evaluation.query.filter_by(session_id=s.id).all()
     evaluation_map = {(e.participant_id, e.competence_id): e for e in evaluations}
