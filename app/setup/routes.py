@@ -27,14 +27,6 @@ def wizard():
         smtp_use_tls = request.form.get("smtp_use_tls") in {"1", "true", "on", "yes", "YES"}
         smtp_sender = (request.form.get("smtp_sender") or "").strip() or None
 
-        smtp_host = (request.form.get("smtp_host") or "").strip() or None
-        smtp_port_raw = (request.form.get("smtp_port") or "").strip()
-        smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else None
-        smtp_username = (request.form.get("smtp_username") or "").strip() or None
-        smtp_password = (request.form.get("smtp_password") or "").strip() or None
-        smtp_use_tls = request.form.get("smtp_use_tls") in {"1", "true", "on", "yes", "YES"}
-        smtp_sender = (request.form.get("smtp_sender") or "").strip() or None
-
         if not admin_email or "@" not in admin_email:
             flash("Veuillez saisir un email admin valide.", "danger")
             return render_template("setup/wizard.html")
@@ -58,13 +50,6 @@ def wizard():
         settings.app_name = app_name or None
         settings.organization_name = org_name or None
         settings.public_base_url = public_base_url
-
-        settings.smtp_host = smtp_host
-        settings.smtp_port = smtp_port
-        settings.smtp_username = smtp_username
-        settings.smtp_password = smtp_password
-        settings.smtp_use_tls = smtp_use_tls if smtp_host else None
-        settings.smtp_sender = smtp_sender
 
         settings.smtp_host = smtp_host
         settings.smtp_port = smtp_port
