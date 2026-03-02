@@ -20,6 +20,7 @@ class Config:
         DEFAULT_SECRET_KEY,
     )
     MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", str(10 * 1024 * 1024)))
+    WTF_CSRF_TIME_LIMIT = int(os.environ.get("WTF_CSRF_TIME_LIMIT", str(8 * 60 * 60)))
 
     # --- DB -----------------------------------------------------------------
     # Objectif :
@@ -64,6 +65,7 @@ class Config:
     MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "")
     MAIL_USE_TLS = os.environ.get("MAIL_USE_TLS", "1") in {"1", "true", "True", "yes", "YES"}
     MAIL_SENDER = os.environ.get("MAIL_SENDER", "")
+    MAIL_TIMEOUT_SECONDS = float(os.environ.get("MAIL_TIMEOUT_SECONDS", "10"))
 
     # URL publique (LAN) de l'application, utilisée pour générer des QR codes.
     # Exemple : http://erp-cgb:8000 ou http://192.168.1.10:8000
@@ -76,4 +78,8 @@ class Config:
     # Migration DB industrialisée
     DB_AUTO_UPGRADE_ON_START = os.environ.get("DB_AUTO_UPGRADE_ON_START", "1") in {"1", "true", "True", "yes", "YES"}
     DB_ENABLE_LEGACY_SCHEMA_PATCH = os.environ.get("DB_ENABLE_LEGACY_SCHEMA_PATCH", "0") in {"1", "true", "True", "yes", "YES"}
+
+    # Réinitialisation mot de passe
+    PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS = int(os.environ.get("PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS", "3600"))
+    PASSWORD_RESET_ALLOW_DEBUG_LINK = os.environ.get("PASSWORD_RESET_ALLOW_DEBUG_LINK", "1") in {"1", "true", "True", "yes", "YES"}
 

@@ -144,6 +144,16 @@ class InstanceSettings(db.Model):
     organization_name = db.Column(db.String(180), nullable=True)
     app_logo_path = db.Column(db.String(255), nullable=True)
     organization_logo_path = db.Column(db.String(255), nullable=True)
+    public_base_url = db.Column(db.String(255), nullable=True)
+
+    # SMTP (override optionnel des variables d'environnement)
+    smtp_host = db.Column(db.String(255), nullable=True)
+    smtp_port = db.Column(db.Integer, nullable=True)
+    smtp_username = db.Column(db.String(255), nullable=True)
+    smtp_password = db.Column(db.String(255), nullable=True)
+    smtp_use_tls = db.Column(db.Boolean, nullable=True)
+    smtp_sender = db.Column(db.String(255), nullable=True)
+
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -966,9 +976,20 @@ class AtelierActivite(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Soft-delete (safe during tests / RGPD / audit)
+    # Statut métier + soft-delete
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     is_deleted = db.Column(db.Boolean, nullable=False, default=False, index=True)
     deleted_at = db.Column(db.DateTime, nullable=True)
+
+    # Continuité statistique (ex: atelier renommé d'une année à l'autre)
+    continuity_parent_id = db.Column(db.Integer, db.ForeignKey("atelier_activite.id"), nullable=True, index=True)
+    continuity_parent = db.relationship(
+        "AtelierActivite",
+        remote_side=[id],
+        foreign_keys=[continuity_parent_id],
+        post_update=True,
+        backref=db.backref("continuity_children", lazy="dynamic"),
+    )
 
     sessions = db.relationship("SessionActivite", backref="atelier", cascade="all, delete-orphan")
     competences = db.relationship(
