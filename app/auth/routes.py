@@ -1,6 +1,7 @@
 import smtplib
 from email.message import EmailMessage
 from socket import timeout as SocketTimeout
+from urllib.parse import urljoin
 
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, flash
 from flask_login import login_user, logout_user, login_required
@@ -44,6 +45,20 @@ def _load_password_reset_user(token: str) -> User | None:
 
     return user
 
+
+
+
+def _build_external_reset_link(token: str) -> str:
+    """Construit un lien de reset utilisable hors du poste hôte.
+
+    Priorité à PUBLIC_BASE_URL (ex: http://192.168.1.10:8000)
+    puis fallback sur url_for(..., _external=True).
+    """
+    public_base_url = (current_app.config.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    reset_path = url_for("auth.password_reset_token", token=token)
+    if public_base_url:
+        return urljoin(public_base_url + "/", reset_path.lstrip("/"))
+    return url_for("auth.password_reset_token", token=token, _external=True)
 
 def _send_password_reset_email(to_email: str, reset_link: str) -> bool:
     mail_cfg = resolve_mail_settings(current_app.config)
@@ -131,7 +146,7 @@ def password_reset_request():
         debug_link = None
         if user:
             token = _build_password_reset_token(user)
-            reset_link = url_for("auth.password_reset_token", token=token, _external=True)
+            reset_link = _build_external_reset_link(token)
             sent = _send_password_reset_email(user.email, reset_link)
 
             if not sent and current_app.debug and current_app.config.get("PASSWORD_RESET_ALLOW_DEBUG_LINK", True):
