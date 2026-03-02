@@ -192,9 +192,18 @@ def objectifs():
             selected_projet_id = request.form.get("projet_id", type=int)
             selected_module_id = request.form.get("module_id", type=int)
 
+            parent_obj = Objectif.query.get(parent_id) if parent_id else None
+            if parent_id and not parent_obj:
+                flash("Objectif parent introuvable.", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=projet_id, atelier_id=atelier_id, session_id=session_id))
+
             if not obj_type or not titre:
                 flash("Type et titre obligatoires.", "danger")
                 return redirect(url_for("pedagogie.objectifs", projet_id=projet_id, atelier_id=atelier_id, session_id=session_id))
+
+            # Hérite du projet parent si non renseigné
+            if parent_obj and not selected_projet_id and parent_obj.projet_id:
+                selected_projet_id = parent_obj.projet_id
 
             # Règles métier
             if obj_type == "general":
@@ -216,29 +225,35 @@ def objectifs():
                 flash("Type d'objectif invalide.", "danger")
                 return redirect(url_for("pedagogie.objectifs"))
 
-            obj = Objectif(
-                type=obj_type,
-                titre=titre,
-                description=description,
-                seuil_validation=seuil_validation,
-                parent_id=parent_id,
-                projet_id=selected_projet_id,
-                atelier_id=selected_atelier_id,
-                session_id=None,  # session n'est plus un niveau de structuration pédagogique
-                module_id=selected_module_id,
-            )
-            db.session.add(obj)
-            db.session.commit()
+            try:
+                obj = Objectif(
+                    type=obj_type,
+                    titre=titre,
+                    description=description,
+                    seuil_validation=seuil_validation,
+                    parent_id=parent_id,
+                    projet_id=selected_projet_id,
+                    atelier_id=selected_atelier_id,
+                    session_id=None,  # session n'est plus un niveau de structuration pédagogique
+                    module_id=selected_module_id,
+                )
+                db.session.add(obj)
+                db.session.commit()
 
-            # Liaisons OO <-> compétences alimentées automatiquement par le module
-            if obj.type == "operationnel" and obj.module_id:
-                mod = PedagogieModule.query.get(obj.module_id)
-                if mod:
-                    for comp in mod.competences:
-                        existing = ObjectifCompetenceMap.query.filter_by(objectif_id=obj.id, competence_id=comp.id).first()
-                        if not existing:
-                            db.session.add(ObjectifCompetenceMap(objectif_id=obj.id, competence_id=comp.id, poids=1.0, actif=True))
-                    db.session.commit()
+                # Liaisons OO <-> compétences alimentées automatiquement par le module
+                if obj.type == "operationnel" and obj.module_id:
+                    mod = PedagogieModule.query.get(obj.module_id)
+                    if mod:
+                        for comp in mod.competences:
+                            existing = ObjectifCompetenceMap.query.filter_by(objectif_id=obj.id, competence_id=comp.id).first()
+                            if not existing:
+                                db.session.add(ObjectifCompetenceMap(objectif_id=obj.id, competence_id=comp.id, poids=1.0, actif=True))
+                        db.session.commit()
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception("Erreur création objectif")
+                flash(f"Impossible de créer l'objectif: {exc}", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id or projet_id, atelier_id=selected_atelier_id or atelier_id, session_id=session_id))
 
             flash("Objectif ajouté.", "success")
             return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id, atelier_id=selected_atelier_id))
