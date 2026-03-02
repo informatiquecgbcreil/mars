@@ -64,6 +64,7 @@ class Config:
     MAIL_PASSWORD = os.environ.get("MAIL_PASSWORD", "")
     MAIL_USE_TLS = os.environ.get("MAIL_USE_TLS", "1") in {"1", "true", "True", "yes", "YES"}
     MAIL_SENDER = os.environ.get("MAIL_SENDER", "")
+    MAIL_TIMEOUT_SECONDS = float(os.environ.get("MAIL_TIMEOUT_SECONDS", "10"))
 
     # URL publique (LAN) de l'application, utilisée pour générer des QR codes.
     # Exemple : http://erp-cgb:8000 ou http://192.168.1.10:8000

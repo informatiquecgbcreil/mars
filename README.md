@@ -90,4 +90,5 @@ Pendant la première installation (`/setup`), vous pouvez aussi renseigner le SM
 - Route de demande: `/password-reset`
 - Route de réinitialisation: `/password-reset/<token>`
 - Le lien expire automatiquement (configurable via `PASSWORD_RESET_TOKEN_MAX_AGE_SECONDS`).
+- L'envoi SMTP est borné dans le temps pour éviter les pages bloquées (`MAIL_TIMEOUT_SECONDS`, défaut 10s).
 

@@ -1,5 +1,6 @@
 import smtplib
 from email.message import EmailMessage
+from socket import timeout as SocketTimeout
 
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, flash
 from flask_login import login_user, logout_user, login_required
@@ -67,20 +68,26 @@ def _send_password_reset_email(to_email: str, reset_link: str) -> bool:
     use_tls = bool(mail_cfg["use_tls"])
     username = (mail_cfg["username"] or "").strip()
     password = mail_cfg["password"] or ""
+    smtp_timeout = float(current_app.config.get("MAIL_TIMEOUT_SECONDS", 10))
 
-    server = smtplib.SMTP(host, port)
+    server = None
     try:
+        server = smtplib.SMTP(host, port, timeout=smtp_timeout)
         if use_tls:
-            server.starttls()
+            server.starttls(timeout=smtp_timeout)
         if username and password:
             server.login(username, password)
         server.send_message(msg)
         return True
+    except (OSError, smtplib.SMTPException, SocketTimeout) as exc:
+        current_app.logger.warning("Password reset email send failed: %s", exc)
+        return False
     finally:
-        try:
-            server.quit()
-        except Exception:
-            pass
+        if server is not None:
+            try:
+                server.quit()
+            except Exception:
+                pass
 
 @bp.route("/", methods=["GET", "POST"])
 def login():
