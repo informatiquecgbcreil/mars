@@ -976,9 +976,20 @@ class AtelierActivite(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Soft-delete (safe during tests / RGPD / audit)
+    # Statut métier + soft-delete
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     is_deleted = db.Column(db.Boolean, nullable=False, default=False, index=True)
     deleted_at = db.Column(db.DateTime, nullable=True)
+
+    # Continuité statistique (ex: atelier renommé d'une année à l'autre)
+    continuity_parent_id = db.Column(db.Integer, db.ForeignKey("atelier_activite.id"), nullable=True, index=True)
+    continuity_parent = db.relationship(
+        "AtelierActivite",
+        remote_side=[id],
+        foreign_keys=[continuity_parent_id],
+        post_update=True,
+        backref=db.backref("continuity_children", lazy="dynamic"),
+    )
 
     sessions = db.relationship("SessionActivite", backref="atelier", cascade="all, delete-orphan")
     competences = db.relationship(

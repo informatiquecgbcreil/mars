@@ -12,6 +12,11 @@
           {% if corbeille %}
             <a class="btn" href="{{ url_for('activite.index') }}">Voir actifs</a>
           {% else %}
+            {% if show_inactive %}
+              <a class="btn" href="{{ url_for('activite.index') }}">Masquer inactifs</a>
+            {% else %}
+              <a class="btn" href="{{ url_for('activite.index', inactifs=1) }}">Afficher inactifs</a>
+            {% endif %}
             <a class="btn" href="{{ url_for('activite.index', corbeille=1) }}">Corbeille</a>
           {% endif %}
           <a class="btn" href="{{ url_for('activite.atelier_new') }}">+ Nouvel atelier</a>
@@ -30,6 +35,7 @@
               <th>Type</th>
               <th>Capacité</th>
               <th>Durée</th>
+              <th>Statut</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -46,6 +52,10 @@
                   {% endif %}
                 </td>
                 <td>{{ a.duree_defaut_minutes or '—' }} min</td>
+                <td>
+                  {% if a.is_active %}<span class="badge bg-success">Actif</span>{% else %}<span class="badge bg-secondary">Inactif</span>{% endif %}
+                  {% if a.continuity_parent %}<div class="muted" style="font-size:12px;">Suite de: {{ a.continuity_parent.nom }}</div>{% endif %}
+                </td>
                 <td>
                   {% if not corbeille %}
                     <a class="btn" href="{{ url_for('activite.sessions', atelier_id=a.id) }}">Sessions</a>
@@ -64,9 +74,9 @@
               </tr>
             {% else %}
               {% if corbeille %}
-                <tr><td colspan="5" class="muted">Corbeille vide.</td></tr>
+                <tr><td colspan="6" class="muted">Corbeille vide.</td></tr>
               {% else %}
-                <tr><td colspan="5" class="muted">Aucun atelier pour l’instant.</td></tr>
+                <tr><td colspan="6" class="muted">Aucun atelier pour l’instant.</td></tr>
               {% endif %}
             {% endfor %}
           </tbody>

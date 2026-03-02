@@ -190,11 +190,14 @@ def index():
     secteur = _user_secteur()
     _ensure_seed_ateliers(secteur)
     corbeille = (request.args.get("corbeille") == "1")
+    show_inactive = (request.args.get("inactifs") == "1")
     q = AtelierActivite.query.filter_by(secteur=secteur)
     if corbeille:
         q = q.filter(AtelierActivite.is_deleted.is_(True))
     else:
         q = q.filter(AtelierActivite.is_deleted.is_(False))
+        if not show_inactive:
+            q = q.filter(AtelierActivite.is_active.is_(True))
     ateliers = q.order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/index.html",
@@ -202,6 +205,7 @@ def index():
         ateliers=ateliers,
         is_admin_global=_is_admin_global(),
         corbeille=corbeille,
+        show_inactive=show_inactive,
     )
 
 
@@ -409,6 +413,8 @@ def atelier_new():
         heures_dispo_defaut_mois = request.form.get("heures_dispo_defaut_mois") or None
 
         motifs = [m.strip() for m in (request.form.get("motifs") or "").split(";") if m.strip()]
+        is_active = request.form.get("is_active") in {"1", "true", "on", "yes", "YES"}
+        continuity_parent_id = request.form.get("continuity_parent_id", type=int)
         motifs_json = None
         if motifs:
             import json as _json
@@ -423,6 +429,8 @@ def atelier_new():
             heures_dispo_defaut_mois=float(heures_dispo_defaut_mois) if heures_dispo_defaut_mois else None,
             duree_defaut_minutes=int(duree_defaut_minutes) if duree_defaut_minutes else None,
             motifs_json=motifs_json,
+            is_active=is_active,
+            continuity_parent_id=continuity_parent_id,
         )
         competence_ids = [int(cid) for cid in request.form.getlist("competence_ids") if cid.isdigit()]
         if competence_ids:
@@ -433,12 +441,14 @@ def atelier_new():
         return redirect(url_for("activite.index"))
 
     referentiels = _load_referentiels()
+    ateliers_continuite = AtelierActivite.query.filter(AtelierActivite.secteur == secteur, AtelierActivite.is_deleted.is_(False)).order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/atelier_form.html",
         secteur=secteur,
         atelier=None,
         referentiels=referentiels,
         selected_competences=set(),
+        ateliers_continuite=ateliers_continuite,
     )
 
 
@@ -469,6 +479,12 @@ def atelier_edit(atelier_id: int):
         atelier.heures_dispo_defaut_mois = float(heures_dispo_defaut_mois) if heures_dispo_defaut_mois else None
 
         motifs = [m.strip() for m in (request.form.get("motifs") or "").split(";") if m.strip()]
+        is_active = request.form.get("is_active") in {"1", "true", "on", "yes", "YES"}
+        continuity_parent_id = request.form.get("continuity_parent_id", type=int)
+        if continuity_parent_id == atelier.id:
+            continuity_parent_id = None
+        atelier.is_active = is_active
+        atelier.continuity_parent_id = continuity_parent_id
         if motifs:
             import json as _json
             atelier.motifs_json = _json.dumps(motifs, ensure_ascii=False)
@@ -488,6 +504,7 @@ def atelier_edit(atelier_id: int):
     motifs_str = "; ".join(atelier.motifs() or [])
     referentiels = _load_referentiels()
     selected_competences = {c.id for c in atelier.competences}
+    ateliers_continuite = AtelierActivite.query.filter(AtelierActivite.secteur == secteur, AtelierActivite.is_deleted.is_(False), AtelierActivite.id != atelier.id).order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/atelier_form.html",
         secteur=secteur,
@@ -495,6 +512,7 @@ def atelier_edit(atelier_id: int):
         motifs_str=motifs_str,
         referentiels=referentiels,
         selected_competences=selected_competences,
+        ateliers_continuite=ateliers_continuite,
     )
 
 
