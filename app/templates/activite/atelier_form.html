@@ -49,6 +49,26 @@
 
         <div class="spacer"></div>
 
+        <div class="grid" style="grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label style="display:flex; gap:8px; align-items:center;">
+              <input type="checkbox" name="is_active" value="1" {% if atelier is none or atelier.is_active %}checked{% endif %}>
+              Atelier actif (inclus dans les stats "ateliers actifs")
+            </label>
+            <div class="muted">Décoche pour archiver sans supprimer (historique conservé).</div>
+          </div>
+          <div>
+            <label>Continuité statistique (atelier précédent renommé)</label>
+            <select class="in" name="continuity_parent_id">
+              <option value="">Aucune continuité</option>
+              {% for a in ateliers_continuite or [] %}
+                <option value="{{ a.id }}" {% if atelier and atelier.continuity_parent_id == a.id %}selected{% endif %}>{{ a.nom }}</option>
+              {% endfor %}
+            </select>
+            <div class="muted">Permet d'agréger les stats d'un atelier renommé d'une année à l'autre.</div>
+          </div>
+        </div>
+
         <label>Motifs (liste déroulante) · sépare par « ; »</label>
         <input class="in" type="text" name="motifs" value="{{ motifs_str if motifs_str is defined else '' }}" placeholder="CAF; FranceConnect; Impôts; CV">
         <div class="muted">Le champ « Autre » restera disponible à côté.</div>
