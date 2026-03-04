@@ -34,6 +34,10 @@ from app.models import (
     PlanProjetAtelierModule,
     Projet,
     PasseportNote,
+    SessionScheduleEditLog,
+    Framework,
+    Skill,
+    SessionSkill,
 )
 
 from ..rbac import require_perm
@@ -118,6 +122,40 @@ def _safe_unlink(path: str | None) -> None:
         pass
 
 
+def _sort_competences(items):
+    return sorted(items, key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()))
+
+
+def _collect_session_competences(session: SessionActivite, session_objectifs: list[Objectif] | None = None):
+    """Retourne les compétences de session via 3 sources fusionnées:
+
+    1) compétences explicitement liées à la session,
+    2) compétences des modules liés à la session,
+    3) compétences des objectifs opérationnels de session.
+
+    Cette fusion évite le bug où l'évaluation affiche "Aucune compétence"
+    alors que des modules ont bien été sélectionnés.
+    """
+    by_id = {}
+
+    for comp in (getattr(session, "competences", []) or []):
+        by_id[comp.id] = comp
+
+    for module in (getattr(session, "modules", []) or []):
+        for comp in (getattr(module, "competences", []) or []):
+            by_id[comp.id] = comp
+
+    objectifs = session_objectifs
+    if objectifs is None:
+        objectifs = Objectif.query.filter_by(session_id=session.id, type="operationnel").all()
+
+    for obj in objectifs:
+        for comp in (getattr(obj, "competences", []) or []):
+            by_id[comp.id] = comp
+
+    return _sort_competences(list(by_id.values()))
+
+
 def _ensure_month_capacity(atelier: AtelierActivite, session: SessionActivite) -> None:
     """Crée la capacité mensuelle si elle n'existe pas (ateliers INDIVIDUEL_MENSUEL)."""
     if atelier.type_atelier != "INDIVIDUEL_MENSUEL":
@@ -156,11 +194,14 @@ def index():
     secteur = _user_secteur()
     _ensure_seed_ateliers(secteur)
     corbeille = (request.args.get("corbeille") == "1")
+    show_inactive = (request.args.get("inactifs") == "1")
     q = AtelierActivite.query.filter_by(secteur=secteur)
     if corbeille:
         q = q.filter(AtelierActivite.is_deleted.is_(True))
     else:
         q = q.filter(AtelierActivite.is_deleted.is_(False))
+        if not show_inactive:
+            q = q.filter(AtelierActivite.is_active.is_(True))
     ateliers = q.order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/index.html",
@@ -168,6 +209,7 @@ def index():
         ateliers=ateliers,
         is_admin_global=_is_admin_global(),
         corbeille=corbeille,
+        show_inactive=show_inactive,
     )
 
 
@@ -375,6 +417,8 @@ def atelier_new():
         heures_dispo_defaut_mois = request.form.get("heures_dispo_defaut_mois") or None
 
         motifs = [m.strip() for m in (request.form.get("motifs") or "").split(";") if m.strip()]
+        is_active = request.form.get("is_active") in {"1", "true", "on", "yes", "YES"}
+        continuity_parent_id = request.form.get("continuity_parent_id", type=int)
         motifs_json = None
         if motifs:
             import json as _json
@@ -389,6 +433,8 @@ def atelier_new():
             heures_dispo_defaut_mois=float(heures_dispo_defaut_mois) if heures_dispo_defaut_mois else None,
             duree_defaut_minutes=int(duree_defaut_minutes) if duree_defaut_minutes else None,
             motifs_json=motifs_json,
+            is_active=is_active,
+            continuity_parent_id=continuity_parent_id,
         )
         competence_ids = [int(cid) for cid in request.form.getlist("competence_ids") if cid.isdigit()]
         if competence_ids:
@@ -399,12 +445,14 @@ def atelier_new():
         return redirect(url_for("activite.index"))
 
     referentiels = _load_referentiels()
+    ateliers_continuite = AtelierActivite.query.filter(AtelierActivite.secteur == secteur, AtelierActivite.is_deleted.is_(False)).order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/atelier_form.html",
         secteur=secteur,
         atelier=None,
         referentiels=referentiels,
         selected_competences=set(),
+        ateliers_continuite=ateliers_continuite,
     )
 
 
@@ -435,6 +483,12 @@ def atelier_edit(atelier_id: int):
         atelier.heures_dispo_defaut_mois = float(heures_dispo_defaut_mois) if heures_dispo_defaut_mois else None
 
         motifs = [m.strip() for m in (request.form.get("motifs") or "").split(";") if m.strip()]
+        is_active = request.form.get("is_active") in {"1", "true", "on", "yes", "YES"}
+        continuity_parent_id = request.form.get("continuity_parent_id", type=int)
+        if continuity_parent_id == atelier.id:
+            continuity_parent_id = None
+        atelier.is_active = is_active
+        atelier.continuity_parent_id = continuity_parent_id
         if motifs:
             import json as _json
             atelier.motifs_json = _json.dumps(motifs, ensure_ascii=False)
@@ -454,6 +508,7 @@ def atelier_edit(atelier_id: int):
     motifs_str = "; ".join(atelier.motifs() or [])
     referentiels = _load_referentiels()
     selected_competences = {c.id for c in atelier.competences}
+    ateliers_continuite = AtelierActivite.query.filter(AtelierActivite.secteur == secteur, AtelierActivite.is_deleted.is_(False), AtelierActivite.id != atelier.id).order_by(AtelierActivite.nom.asc()).all()
     return render_template(
         "activite/atelier_form.html",
         secteur=secteur,
@@ -461,6 +516,7 @@ def atelier_edit(atelier_id: int):
         motifs_str=motifs_str,
         referentiels=referentiels,
         selected_competences=selected_competences,
+        ateliers_continuite=ateliers_continuite,
     )
 
 
@@ -783,6 +839,210 @@ def session_new(atelier_id: int):
     )
 
 
+@bp.route("/session/<int:session_id>/edit-schedule", methods=["GET", "POST"])
+@login_required
+def session_edit_schedule(session_id: int):
+    """Autorise la correction de date/heure/capacité d'une session déjà émargée, avec traçabilité."""
+    secteur = _user_secteur()
+    s = SessionActivite.query.get_or_404(session_id)
+    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
+
+    if s.is_deleted or atelier.is_deleted:
+        flash("Cette session/atelier est dans la corbeille.", "warning")
+        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
+    if not _is_admin_global() and s.secteur != secteur:
+        flash("Accès refusé.", "danger")
+        return redirect(url_for("activite.index"))
+
+    if request.method == "POST":
+        reason = (request.form.get("edit_reason") or "").strip()
+        if len(reason) < 8:
+            flash("Merci de préciser une raison (au moins 8 caractères) pour la traçabilité.", "danger")
+            return redirect(url_for("activite.session_edit_schedule", session_id=s.id))
+
+        old_date = s.rdv_date if s.session_type == "INDIVIDUEL_MENSUEL" else s.date_session
+        old_start = s.rdv_debut if s.session_type == "INDIVIDUEL_MENSUEL" else s.heure_debut
+        old_end = s.rdv_fin if s.session_type == "INDIVIDUEL_MENSUEL" else s.heure_fin
+
+        if s.session_type == "INDIVIDUEL_MENSUEL":
+            rdv_date = request.form.get("rdv_date")
+            if not rdv_date:
+                flash("Date RDV obligatoire.", "danger")
+                return redirect(url_for("activite.session_edit_schedule", session_id=s.id))
+            s.rdv_date = datetime.strptime(rdv_date, "%Y-%m-%d").date()
+            s.rdv_debut = (request.form.get("rdv_debut") or "").strip() or None
+            s.rdv_fin = (request.form.get("rdv_fin") or "").strip() or None
+        else:
+            date_session = request.form.get("date_session")
+            if not date_session:
+                flash("Date de session obligatoire.", "danger")
+                return redirect(url_for("activite.session_edit_schedule", session_id=s.id))
+            s.date_session = datetime.strptime(date_session, "%Y-%m-%d").date()
+            s.heure_debut = (request.form.get("heure_debut") or "").strip() or None
+            s.heure_fin = (request.form.get("heure_fin") or "").strip() or None
+            capacite = request.form.get("capacite")
+            s.capacite = int(capacite) if capacite else None
+
+        new_date = s.rdv_date if s.session_type == "INDIVIDUEL_MENSUEL" else s.date_session
+        new_start = s.rdv_debut if s.session_type == "INDIVIDUEL_MENSUEL" else s.heure_debut
+        new_end = s.rdv_fin if s.session_type == "INDIVIDUEL_MENSUEL" else s.heure_fin
+
+        if old_date == new_date and old_start == new_start and old_end == new_end:
+            flash("Aucun changement détecté sur date/heure.", "info")
+            return redirect(url_for("activite.session_edit_schedule", session_id=s.id))
+
+        log = SessionScheduleEditLog(
+            session_id=s.id,
+            atelier_id=atelier.id,
+            secteur=s.secteur,
+            old_date=old_date,
+            old_start=old_start,
+            old_end=old_end,
+            new_date=new_date,
+            new_start=new_start,
+            new_end=new_end,
+            reason=reason,
+            edited_by=getattr(current_user, "id", None),
+        )
+        db.session.add(log)
+        db.session.commit()
+        flash("Date/heure de session mises à jour et tracées.", "success")
+        return redirect(url_for("activite.emargement", session_id=s.id))
+
+    edits = (
+        SessionScheduleEditLog.query.filter_by(session_id=s.id)
+        .order_by(SessionScheduleEditLog.edited_at.desc())
+        .limit(30)
+        .all()
+    )
+    return render_template(
+        "activite/session_edit_schedule.html",
+        secteur=secteur,
+        atelier=atelier,
+        session=s,
+        edits=edits,
+    )
+
+
+# ------------------ Compétences (tag au niveau SESSION) ------------------
+
+
+@bp.route("/session/<int:session_id>/skills", methods=["GET"])
+@login_required
+def session_skills(session_id: int):
+    """Associer des compétences (Skill) à une session (unité pédagogique)."""
+    secteur = _user_secteur()
+    s = SessionActivite.query.get_or_404(session_id)
+    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
+
+    if s.is_deleted or atelier.is_deleted:
+        flash("Cette session/atelier est dans la corbeille.", "warning")
+        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
+    if not _is_admin_global() and s.secteur != secteur:
+        flash("Accès refusé.", "danger")
+        return redirect(url_for("activite.index"))
+
+    framework_id = request.args.get("framework_id", type=int)
+    q = (request.args.get("q") or "").strip()
+
+    frameworks = Framework.query.filter(Framework.actif.is_(True)).order_by(Framework.nom.asc()).all()
+    fw_map = {fw.id: fw for fw in frameworks}
+    if framework_id is None and frameworks:
+        framework_id = frameworks[0].id
+
+    current = (
+        Skill.query.join(SessionSkill, SessionSkill.skill_id == Skill.id)
+        .filter(SessionSkill.session_id == s.id)
+        .order_by(Skill.framework_id.asc(), Skill.code.asc())
+        .all()
+    )
+    current_ids = {sk.id for sk in current}
+
+    results = []
+    if q:
+        sq = Skill.query.filter(Skill.actif.is_(True))
+        if framework_id:
+            sq = sq.filter(Skill.framework_id == framework_id)
+        like = f"%{q}%"
+        sq = sq.filter((Skill.code.ilike(like)) | (Skill.label.ilike(like)))
+        results = sq.order_by(Skill.code.asc()).limit(60).all()
+
+    return render_template(
+        "activite/session_skills.html",
+        secteur=secteur,
+        atelier=atelier,
+        session=s,
+        frameworks=frameworks,
+        fw_map=fw_map,
+        framework_id=framework_id,
+        q=q,
+        current=current,
+        current_ids=current_ids,
+        results=results,
+    )
+
+
+@bp.route("/session/<int:session_id>/skills/add", methods=["POST"])
+@login_required
+def session_skill_add(session_id: int):
+    secteur = _user_secteur()
+    s = SessionActivite.query.get_or_404(session_id)
+    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
+
+    if s.is_deleted or atelier.is_deleted:
+        flash("Cette session/atelier est dans la corbeille.", "warning")
+        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
+    if not _is_admin_global() and s.secteur != secteur:
+        flash("Accès refusé.", "danger")
+        return redirect(url_for("activite.index"))
+
+    skill_id = request.form.get("skill_id", type=int)
+    if not skill_id:
+        flash("Compétence manquante.", "warning")
+        return redirect(url_for("activite.session_skills", session_id=s.id))
+
+    sk = Skill.query.get_or_404(skill_id)
+    exists = SessionSkill.query.filter_by(session_id=s.id, skill_id=sk.id).first()
+    if not exists:
+        db.session.add(SessionSkill(session_id=s.id, skill_id=sk.id))
+        db.session.commit()
+        flash("Compétence ajoutée à la session.", "success")
+    else:
+        flash("Déjà présente.", "info")
+
+    framework_id = request.form.get("framework_id", type=int)
+    q = (request.form.get("q") or "").strip()
+    return redirect(url_for("activite.session_skills", session_id=s.id, framework_id=framework_id, q=q))
+
+
+@bp.route("/session/<int:session_id>/skills/remove", methods=["POST"])
+@login_required
+def session_skill_remove(session_id: int):
+    secteur = _user_secteur()
+    s = SessionActivite.query.get_or_404(session_id)
+    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
+
+    if s.is_deleted or atelier.is_deleted:
+        flash("Cette session/atelier est dans la corbeille.", "warning")
+        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
+    if not _is_admin_global() and s.secteur != secteur:
+        flash("Accès refusé.", "danger")
+        return redirect(url_for("activite.index"))
+
+    skill_id = request.form.get("skill_id", type=int)
+    if not skill_id:
+        flash("Compétence manquante.", "warning")
+        return redirect(url_for("activite.session_skills", session_id=s.id))
+
+    SessionSkill.query.filter_by(session_id=s.id, skill_id=skill_id).delete()
+    db.session.commit()
+    flash("Compétence retirée.", "success")
+
+    framework_id = request.form.get("framework_id", type=int)
+    q = (request.form.get("q") or "").strip()
+    return redirect(url_for("activite.session_skills", session_id=s.id, framework_id=framework_id, q=q))
+
+
 # ------------------ Évaluation (grille batch) ------------------
 
 
@@ -801,7 +1061,7 @@ def evaluation_batch(session_id: int):
 
     presences = PresenceActivite.query.filter_by(session_id=session_id).all()
     participants = [p.participant for p in presences]
-    competences = list(getattr(s, "competences", []) or [])
+    competences = _collect_session_competences(s)
 
     if request.method == "POST":
         eval_date = s.rdv_date or s.date_session or date.today()
@@ -994,8 +1254,7 @@ def emargement(session_id: int):
 
         if action == "bulk_validate":
             eval_date = s.rdv_date or s.date_session or date.today()
-            session_objectifs = Objectif.query.filter_by(session_id=s.id, type="operationnel").all()
-            session_competences = {comp for obj in session_objectifs for comp in obj.competences}
+            session_competences = _collect_session_competences(s)
             presences = PresenceActivite.query.filter_by(session_id=session_id).all()
             for pr in presences:
                 for comp in session_competences:
@@ -1153,16 +1412,10 @@ def emargement(session_id: int):
     session_objectifs = Objectif.query.filter_by(session_id=s.id, type="operationnel").order_by(Objectif.created_at.asc()).all()
     objectifs_payload = []
     for obj in session_objectifs:
-        competences = sorted(
-            obj.competences,
-            key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()),
-        )
+        competences = _sort_competences(obj.competences)
         objectifs_payload.append({"objectif": obj, "competences": competences})
 
-    session_competences = sorted(
-        {comp for payload in objectifs_payload for comp in payload["competences"]},
-        key=lambda c: ((c.code or "").lower(), (c.nom or "").lower()),
-    )
+    session_competences = _collect_session_competences(s, session_objectifs=session_objectifs)
 
     evaluations = Evaluation.query.filter_by(session_id=s.id).all()
     evaluation_map = {(e.participant_id, e.competence_id): e for e in evaluations}
@@ -1178,6 +1431,12 @@ def emargement(session_id: int):
         .all()
     )
     current_module_ids = {m.id for m in (getattr(s, "modules", []) or [])}
+    schedule_edits = (
+        SessionScheduleEditLog.query.filter_by(session_id=s.id)
+        .order_by(SessionScheduleEditLog.edited_at.desc())
+        .limit(5)
+        .all()
+    )
 
     return render_template(
         "activite/emargement.html",
@@ -1193,6 +1452,7 @@ def emargement(session_id: int):
         evaluation_map=evaluation_map,
         modules_available=modules_available,
         current_module_ids=current_module_ids,
+        schedule_edits=schedule_edits,
     )
 
 

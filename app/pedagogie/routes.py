@@ -180,8 +180,99 @@ def objectifs():
     atelier_id = request.args.get("atelier_id", type=int)
     session_id = request.args.get("session_id", type=int)
 
+    def _create_objectif(*, obj_type: str, titre: str, description: str | None, seuil: float, parent_id: int | None, projet_id_val: int | None, atelier_id_val: int | None, module_id_val: int | None):
+        obj = Objectif(
+            type=obj_type,
+            titre=titre,
+            description=description,
+            seuil_validation=seuil,
+            parent_id=parent_id,
+            projet_id=projet_id_val,
+            atelier_id=atelier_id_val,
+            session_id=None,
+            module_id=module_id_val,
+        )
+        db.session.add(obj)
+        db.session.commit()
+
+        if obj.type == "operationnel" and obj.module_id:
+            mod = PedagogieModule.query.get(obj.module_id)
+            if mod:
+                for comp in mod.competences:
+                    existing = ObjectifCompetenceMap.query.filter_by(objectif_id=obj.id, competence_id=comp.id).first()
+                    if not existing:
+                        db.session.add(ObjectifCompetenceMap(objectif_id=obj.id, competence_id=comp.id, poids=1.0, actif=True))
+                db.session.commit()
+        return obj
+
     if request.method == "POST":
         action = request.form.get("action") or ""
+        if action == "quick_create_parcours":
+            selected_projet_id = request.form.get("projet_id", type=int)
+            selected_atelier_id = request.form.get("atelier_id", type=int)
+            selected_module_id = request.form.get("module_id", type=int)
+            titre_base = (request.form.get("titre_base") or "").strip()
+
+            if not (selected_projet_id and selected_atelier_id and selected_module_id and titre_base):
+                flash("Parcours express incomplet: projet, atelier, module et intitulé sont obligatoires.", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=projet_id, atelier_id=atelier_id, session_id=session_id))
+
+            atelier_obj = AtelierActivite.query.get(selected_atelier_id)
+            module_obj = PedagogieModule.query.get(selected_module_id)
+            if not atelier_obj or not module_obj:
+                flash("Atelier ou module introuvable.", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=projet_id, atelier_id=atelier_id, session_id=session_id))
+
+            try:
+                og = Objectif.query.filter_by(type="general", titre=titre_base, projet_id=selected_projet_id).first()
+                if not og:
+                    og = _create_objectif(
+                        obj_type="general",
+                        titre=titre_base,
+                        description=None,
+                        seuil=60.0,
+                        parent_id=None,
+                        projet_id_val=selected_projet_id,
+                        atelier_id_val=None,
+                        module_id_val=None,
+                    )
+
+                os_titre = f"{titre_base} · {atelier_obj.nom}"
+                os_obj = Objectif.query.filter_by(type="specifique", titre=os_titre, atelier_id=selected_atelier_id, parent_id=og.id).first()
+                if not os_obj:
+                    os_obj = _create_objectif(
+                        obj_type="specifique",
+                        titre=os_titre,
+                        description=None,
+                        seuil=60.0,
+                        parent_id=og.id,
+                        projet_id_val=selected_projet_id,
+                        atelier_id_val=selected_atelier_id,
+                        module_id_val=None,
+                    )
+
+                oo_titre = f"{titre_base} · {module_obj.nom}"
+                oo_obj = Objectif.query.filter_by(type="operationnel", titre=oo_titre, module_id=selected_module_id, parent_id=os_obj.id).first()
+                if not oo_obj:
+                    oo_obj = _create_objectif(
+                        obj_type="operationnel",
+                        titre=oo_titre,
+                        description=None,
+                        seuil=60.0,
+                        parent_id=os_obj.id,
+                        projet_id_val=selected_projet_id,
+                        atelier_id_val=selected_atelier_id,
+                        module_id_val=selected_module_id,
+                    )
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception("Erreur création parcours express")
+                flash(f"Impossible de créer le parcours express: {exc}", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id, atelier_id=selected_atelier_id))
+
+            flash("Parcours express créé (OG + OS + OO).", "success")
+            return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id, atelier_id=selected_atelier_id))
+
         if action == "create_objectif":
             obj_type = (request.form.get("type") or "").strip()
             titre = (request.form.get("titre") or "").strip()
@@ -192,9 +283,23 @@ def objectifs():
             selected_projet_id = request.form.get("projet_id", type=int)
             selected_module_id = request.form.get("module_id", type=int)
 
+            parent_obj = Objectif.query.get(parent_id) if parent_id else None
+            if parent_id and not parent_obj:
+                flash("Objectif parent introuvable.", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=projet_id, atelier_id=atelier_id, session_id=session_id))
+
             if not obj_type or not titre:
                 flash("Type et titre obligatoires.", "danger")
                 return redirect(url_for("pedagogie.objectifs", projet_id=projet_id, atelier_id=atelier_id, session_id=session_id))
+
+            # Hérite du projet parent si non renseigné
+            if parent_obj and not selected_projet_id and parent_obj.projet_id:
+                selected_projet_id = parent_obj.projet_id
+
+            if obj_type == "specifique" and not selected_projet_id and selected_atelier_id:
+                link = ProjetAtelier.query.filter_by(atelier_id=selected_atelier_id).first()
+                if link:
+                    selected_projet_id = link.projet_id
 
             # Règles métier
             if obj_type == "general":
@@ -216,29 +321,29 @@ def objectifs():
                 flash("Type d'objectif invalide.", "danger")
                 return redirect(url_for("pedagogie.objectifs"))
 
-            obj = Objectif(
-                type=obj_type,
-                titre=titre,
-                description=description,
-                seuil_validation=seuil_validation,
-                parent_id=parent_id,
-                projet_id=selected_projet_id,
-                atelier_id=selected_atelier_id,
-                session_id=None,  # session n'est plus un niveau de structuration pédagogique
-                module_id=selected_module_id,
-            )
-            db.session.add(obj)
-            db.session.commit()
+            try:
+                if obj_type == "specifique" and parent_obj and parent_obj.type != "general":
+                    flash("Un objectif spécifique doit avoir un parent général.", "danger")
+                    return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id or projet_id, atelier_id=selected_atelier_id or atelier_id, session_id=session_id))
+                if obj_type == "operationnel" and parent_obj and parent_obj.type != "specifique":
+                    flash("Un objectif opérationnel doit avoir un parent spécifique.", "danger")
+                    return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id or projet_id, atelier_id=selected_atelier_id or atelier_id, session_id=session_id))
 
-            # Liaisons OO <-> compétences alimentées automatiquement par le module
-            if obj.type == "operationnel" and obj.module_id:
-                mod = PedagogieModule.query.get(obj.module_id)
-                if mod:
-                    for comp in mod.competences:
-                        existing = ObjectifCompetenceMap.query.filter_by(objectif_id=obj.id, competence_id=comp.id).first()
-                        if not existing:
-                            db.session.add(ObjectifCompetenceMap(objectif_id=obj.id, competence_id=comp.id, poids=1.0, actif=True))
-                    db.session.commit()
+                obj = _create_objectif(
+                    obj_type=obj_type,
+                    titre=titre,
+                    description=description,
+                    seuil=seuil_validation,
+                    parent_id=parent_id,
+                    projet_id_val=selected_projet_id,
+                    atelier_id_val=selected_atelier_id,
+                    module_id_val=selected_module_id,
+                )
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.exception("Erreur création objectif")
+                flash(f"Impossible de créer l'objectif: {exc}", "danger")
+                return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id or projet_id, atelier_id=selected_atelier_id or atelier_id, session_id=session_id))
 
             flash("Objectif ajouté.", "success")
             return redirect(url_for("pedagogie.objectifs", projet_id=selected_projet_id, atelier_id=selected_atelier_id))

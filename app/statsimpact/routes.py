@@ -302,7 +302,7 @@ def stats_pedagogie():
     secteur = _pedago_scope_secteur()
 
     projets_q = Projet.query
-    ateliers_q = AtelierActivite.query.filter(AtelierActivite.is_deleted.is_(False))
+    ateliers_q = _apply_atelier_lifecycle_filters(AtelierActivite.query, flt)
     if secteur:
         projets_q = projets_q.filter(Projet.secteur == secteur)
         ateliers_q = ateliers_q.filter(AtelierActivite.secteur == secteur)
@@ -394,6 +394,19 @@ def stats_pedagogie_bilan(participant_id: int):
 
 
 
+
+
+def _apply_atelier_lifecycle_filters(query, flt, include_inactive: bool = False):
+    """Applique le filtrage métier atelier (hors corbeille + actifs par défaut)."""
+    query = query.filter(AtelierActivite.is_deleted.is_(False))
+    if not include_inactive and not getattr(flt, "atelier_id", None):
+        query = query.filter(AtelierActivite.is_active.is_(True))
+    return query
+
+
+def _continuity_group_key(at: AtelierActivite) -> int:
+    return int(getattr(at, "continuity_parent_id", None) or at.id)
+
 def _quartier_bucket(name: str | None) -> str:
     """Regroupe les quartiers en 4 grandes catégories + Inconnu."""
     if not name:
@@ -423,10 +436,14 @@ def _build_magato_per_atelier_workbook(flt) -> Workbook:
         eff_secteur = (getattr(current_user, "secteur_assigne", None) or "").strip() or eff_secteur
 
     # Liste des ateliers dans le périmètre
-    aq = AtelierActivite.query.filter(AtelierActivite.is_deleted.is_(False))
+    aq = _apply_atelier_lifecycle_filters(AtelierActivite.query, flt)
     if eff_secteur:
         aq = aq.filter(AtelierActivite.secteur == eff_secteur)
     ateliers = aq.order_by(AtelierActivite.secteur.asc(), AtelierActivite.nom.asc()).all()
+
+    grouped_ateliers = {}
+    for at in ateliers:
+        grouped_ateliers.setdefault(_continuity_group_key(at), []).append(at)
 
     wb = Workbook()
 
@@ -461,9 +478,11 @@ def _build_magato_per_atelier_workbook(flt) -> Workbook:
     # Agrégats globaux provenance
     global_prov = {"Bas de Creil": 0, "Hauts de Creil": 0, "Rouher": 0, "Autres": 0, "Inconnu": 0}
 
-    for at in ateliers:
+    for _gid, members in grouped_ateliers.items():
+        at = sorted(members, key=lambda x: x.nom)[0]
+        atelier_ids = [m.id for m in members]
         # Sessions de l'atelier dans la période
-        sess_q = db.session.query(SessionActivite).filter(SessionActivite.atelier_id == at.id)
+        sess_q = db.session.query(SessionActivite).filter(SessionActivite.atelier_id.in_(atelier_ids))
         if flt.date_from:
             sess_q = sess_q.filter(func.coalesce(SessionActivite.rdv_date, SessionActivite.date_session) >= flt.date_from)
         if flt.date_to:
@@ -555,9 +574,14 @@ def _build_magato_per_atelier_workbook(flt) -> Workbook:
         ])
 
         # 2) Feuille atelier : bloc stats + matrice
+        group_label = at.nom
+        if len(members) > 1:
+            aliases = sorted({m.nom for m in members if m.nom != at.nom})
+            if aliases:
+                group_label = f"{at.nom} ({', '.join(aliases)})"
         ws = wb.create_sheet(_safe_sheet_title(f"{at.nom}"))
 
-        ws.append([f"{at.secteur} — {at.nom}"])
+        ws.append([f"{at.secteur} — {group_label}"])
         ws.append([])
 
         ws.append(["Statistiques", "Valeur"])
@@ -677,6 +701,7 @@ def exports():
             for s in (
                 AtelierActivite.query.with_entities(AtelierActivite.secteur)
                 .filter(AtelierActivite.is_deleted.is_(False))
+                .filter(AtelierActivite.is_active.is_(True))
                 .distinct()
                 .order_by(AtelierActivite.secteur.asc())
                 .all()
@@ -684,7 +709,7 @@ def exports():
             if s and s[0]
         ]
 
-    q = AtelierActivite.query.filter(AtelierActivite.is_deleted.is_(False))
+    q = _apply_atelier_lifecycle_filters(AtelierActivite.query, flt)
     if flt.secteur:
         q = q.filter(AtelierActivite.secteur == flt.secteur)
     ateliers = q.order_by(AtelierActivite.secteur.asc(), AtelierActivite.nom.asc()).all()
@@ -1023,6 +1048,7 @@ def dashboard():
             for s in (
                 AtelierActivite.query.with_entities(AtelierActivite.secteur)
                 .filter(AtelierActivite.is_deleted.is_(False))
+                .filter(AtelierActivite.is_active.is_(True))
                 .distinct()
                 .order_by(AtelierActivite.secteur.asc())
                 .all()
@@ -1030,7 +1056,7 @@ def dashboard():
             if s and s[0]
         ]
 
-    q = AtelierActivite.query.filter(AtelierActivite.is_deleted.is_(False))
+    q = _apply_atelier_lifecycle_filters(AtelierActivite.query, flt)
     if flt.secteur:
         q = q.filter(AtelierActivite.secteur == flt.secteur)
     ateliers = q.order_by(AtelierActivite.secteur.asc(), AtelierActivite.nom.asc()).all()
@@ -1049,6 +1075,7 @@ def dashboard():
             .select_from(SessionActivite)
             .join(AtelierActivite, SessionActivite.atelier_id == AtelierActivite.id)
             .filter(AtelierActivite.is_deleted.is_(False))
+            .filter(AtelierActivite.is_active.is_(True))
         )
         if eff_secteur:
             years_q = years_q.filter(AtelierActivite.secteur == eff_secteur)
