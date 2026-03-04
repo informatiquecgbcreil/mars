@@ -5,7 +5,7 @@ from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
-from app.models import User, Role, Permission, Secteur, InstanceSettings
+from app.models import User, Role, Permission, Secteur, InstanceSettings, Framework, Skill
 from app.rbac import require_perm
 from app.services.storage import ensure_upload_subdir, media_relpath
 from app.ateliers.excel_import import import_presences_from_xlsx
@@ -452,3 +452,111 @@ def import_excel():
             os.rmdir(tmpdir)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Référentiels / Compétences (DigComp, Pix, CléA...) - import CSV
+# ---------------------------------------------------------------------------
+
+@bp.route("/referentiels")
+@login_required
+@require_perm("admin:rbac")
+def referentiels():
+    # Nombre de compétences par framework
+    frameworks = Framework.query.order_by(Framework.code.asc()).all()
+    out = []
+    for fw in frameworks:
+        cnt = Skill.query.filter_by(framework_id=fw.id).count()
+        out.append({
+            "id": fw.id,
+            "code": fw.code,
+            "nom": fw.nom,
+            "version": fw.version,
+            "lang": fw.lang,
+            "actif": fw.actif,
+            "skill_count": cnt,
+        })
+    return render_template("admin_referentiels.html", frameworks=out)
+
+
+@bp.route("/referentiels/import", methods=["GET", "POST"])
+@login_required
+@require_perm("admin:rbac")
+def import_skills():
+    preset_code = (request.args.get("framework_code") or "").strip() or None
+
+    if request.method == "POST":
+        fw_code = (request.form.get("framework_code") or "").strip()
+        fw_name = (request.form.get("framework_name") or "").strip()
+        fw_version = (request.form.get("framework_version") or "").strip() or None
+        fw_lang = (request.form.get("framework_lang") or "").strip() or "fr"
+        source_url = (request.form.get("source_url") or "").strip() or None
+
+        f = request.files.get("csv_file")
+        if not fw_code or not fw_name or not f:
+            flash("Champs manquants (code, nom, CSV).", "danger")
+            return redirect(url_for("admin.import_skills", framework_code=fw_code or ""))
+
+        # Enregistrer temporairement (Windows-friendly) puis lire en utf-8-sig
+        tmpdir = tempfile.mkdtemp(prefix="skills_import_")
+        filename = secure_filename(f.filename or "skills.csv")
+        csv_path = os.path.join(tmpdir, filename)
+        f.save(csv_path)
+
+        import csv as _csv
+
+        fw = Framework.query.filter_by(code=fw_code).first()
+        if not fw:
+            fw = Framework(code=fw_code, nom=fw_name, version=fw_version, lang=fw_lang, source_url=source_url, actif=True)
+            db.session.add(fw)
+            db.session.flush()
+        else:
+            fw.nom = fw_name
+            fw.version = fw_version
+            fw.lang = fw_lang
+            fw.source_url = source_url
+
+        created = 0
+        updated = 0
+
+        with open(csv_path, "r", encoding="utf-8-sig", newline="") as fh:
+            reader = _csv.DictReader(fh)
+            required = {"code", "label"}
+            missing = required - set(reader.fieldnames or [])
+            if missing:
+                flash(f"CSV invalide : colonnes manquantes {sorted(missing)}", "danger")
+                return redirect(url_for("admin.import_skills", framework_code=fw_code))
+
+            for row in reader:
+                code = (row.get("code") or "").strip()
+                if not code:
+                    continue
+
+                sk = Skill.query.filter_by(framework_id=fw.id, code=code).first()
+                if not sk:
+                    sk = Skill(framework_id=fw.id, code=code, label=(row.get('label') or '').strip() or code)
+                    db.session.add(sk)
+                    created += 1
+                else:
+                    updated += 1
+
+                sk.label = (row.get("label") or "").strip() or sk.label
+                sk.description = (row.get("description") or "").strip() or None
+                sk.domain_code = (row.get("domain_code") or "").strip() or None
+                sk.domain_label = (row.get("domain_label") or "").strip() or None
+
+                so = (row.get("sort_order") or "").strip()
+                if so.isdigit():
+                    sk.sort_order = int(so)
+
+                actif_raw = (row.get("actif") or "").strip().lower()
+                if actif_raw in {"0", "false", "non", "n"}:
+                    sk.actif = False
+                elif actif_raw in {"1", "true", "oui", "o", "y", "yes"}:
+                    sk.actif = True
+
+        db.session.commit()
+        flash(f"Import OK : {created} créées, {updated} mises à jour (framework {fw.code}).", "success")
+        return redirect(url_for("admin.referentiels"))
+
+    return render_template("admin_import_skills.html", preset_code=preset_code)
