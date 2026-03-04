@@ -1,0 +1,137 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+  <div class="stack">
+    <div class="card">
+      <div class="row" style="justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+        <div>
+          <h1 style="margin:0;">Compétences · Session</h1>
+          <div class="muted">{{ atelier.nom }} · {% if session.session_type == 'COLLECTIF' %}{{ session.date_session }} {{ session.heure_debut or '' }}{% if session.heure_fin %}-{{ session.heure_fin }}{% endif %}{% else %}{{ session.rdv_date }} {{ session.rdv_debut or '' }}{% if session.rdv_fin %}-{{ session.rdv_fin }}{% endif %}{% endif %}</div>
+          <div class="muted">Secteur : {{ secteur }}</div>
+        </div>
+        <div class="row" style="gap:10px; flex-wrap:wrap;">
+          <a class="btn" href="{{ url_for('activite.emargement', session_id=session.id) }}">← Retour émargement</a>
+          <a class="btn" href="{{ url_for('activite.sessions', atelier_id=atelier.id) }}">← Retour sessions</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns: 1fr 1fr; gap:12px;">
+
+      <div class="card">
+        <h2 style="margin-top:0;">Déjà associées</h2>
+        <div class="muted">Ces compétences seront proposées automatiquement pour l'évaluation de cette session (phase suivante).</div>
+        <div class="spacer"></div>
+
+        {% if current %}
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Référentiel</th>
+                  <th>Code</th>
+                  <th>Libellé</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for sk in current %}
+                  <tr>
+                    <td class="muted">{{ fw_map.get(sk.framework_id).nom if fw_map.get(sk.framework_id) else '—' }}</td>
+                    <td><strong>{{ sk.code }}</strong></td>
+                    <td>{{ sk.label }}</td>
+                    <td style="white-space:nowrap;">
+                      <form method="post" action="{{ url_for('activite.session_skill_remove', session_id=session.id) }}" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="skill_id" value="{{ sk.id }}">
+                        <input type="hidden" name="framework_id" value="{{ framework_id or '' }}">
+                        <input type="hidden" name="q" value="{{ q }}">
+                        <button class="btn danger" type="submit">Retirer</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="muted">Aucune compétence associée pour l’instant.</div>
+        {% endif %}
+      </div>
+
+
+      <div class="card">
+        <h2 style="margin-top:0;">Ajouter des compétences</h2>
+        <div class="muted">Astuce : cherche par code (ex: <code>2.1</code>) ou par mot-clé (ex: <code>mail</code>, <code>imprimer</code>).</div>
+        <div class="spacer"></div>
+
+        <form method="get" action="{{ url_for('activite.session_skills', session_id=session.id) }}">
+          <div class="row" style="gap:10px; flex-wrap:wrap; align-items:flex-end;">
+            <div style="min-width:240px; flex:1;">
+              <label>Référentiel</label>
+              <select class="in" name="framework_id">
+                {% for fw in frameworks %}
+                  <option value="{{ fw.id }}" {% if fw.id == framework_id %}selected{% endif %}>{{ fw.nom }}{% if fw.version %} · {{ fw.version }}{% endif %}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div style="min-width:240px; flex:2;">
+              <label>Recherche</label>
+              <input class="in" name="q" value="{{ q }}" placeholder="ex: 2.1, mail, imprim…">
+            </div>
+            <div>
+              <button class="btn" type="submit">Rechercher</button>
+            </div>
+          </div>
+        </form>
+
+        <div class="spacer"></div>
+
+        {% if q and not results %}
+          <div class="muted">Aucun résultat.</div>
+        {% endif %}
+
+        {% if results %}
+          <div class="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Libellé</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for sk in results %}
+                  <tr>
+                    <td style="white-space:nowrap;"><strong>{{ sk.code }}</strong></td>
+                    <td>{{ sk.label }}</td>
+                    <td style="white-space:nowrap;">
+                      {% if sk.id in current_ids %}
+                        <span class="muted">Déjà ajoutée</span>
+                      {% else %}
+                        <form method="post" action="{{ url_for('activite.session_skill_add', session_id=session.id) }}" style="display:inline;">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                          <input type="hidden" name="skill_id" value="{{ sk.id }}">
+                          <input type="hidden" name="framework_id" value="{{ framework_id or '' }}">
+                          <input type="hidden" name="q" value="{{ q }}">
+                          <button class="btn" type="submit">Ajouter</button>
+                        </form>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% endif %}
+      </div>
+
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Copier depuis une autre session (bientôt)</h3>
+      <div class="muted">Prochaine étape : un bouton pour cloner les compétences d'une session précédente (même atelier ou même projet) en 1 clic.</div>
+    </div>
+  </div>
+{% endblock %}
