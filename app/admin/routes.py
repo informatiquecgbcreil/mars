@@ -1,11 +1,13 @@
+import csv
 import os
 import tempfile
+from io import StringIO
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
-from app.models import User, Role, Permission, Secteur, InstanceSettings, Framework, Skill
+from app.models import User, Role, Permission, Secteur, InstanceSettings, Referentiel, Competence
 from app.rbac import require_perm
 from app.services.storage import ensure_upload_subdir, media_relpath
 from app.ateliers.excel_import import import_presences_from_xlsx
@@ -454,109 +456,136 @@ def import_excel():
             pass
 
 
-# ---------------------------------------------------------------------------
-# Référentiels / Compétences (DigComp, Pix, CléA...) - import CSV
-# ---------------------------------------------------------------------------
+def _detect_delimiter(sample: str) -> str:
+    candidates = [";", ",", "	", "|"]
+    counts = {c: sample.count(c) for c in candidates}
+    return max(counts, key=counts.get)
 
-@bp.route("/referentiels")
-@login_required
-@require_perm("admin:rbac")
-def referentiels():
-    # Nombre de compétences par framework
-    frameworks = Framework.query.order_by(Framework.code.asc()).all()
-    out = []
-    for fw in frameworks:
-        cnt = Skill.query.filter_by(framework_id=fw.id).count()
-        out.append({
-            "id": fw.id,
-            "code": fw.code,
-            "nom": fw.nom,
-            "version": fw.version,
-            "lang": fw.lang,
-            "actif": fw.actif,
-            "skill_count": cnt,
-        })
-    return render_template("admin_referentiels.html", frameworks=out)
+
+def _parse_framework_csv(raw: bytes):
+    if not raw:
+        return [], ["CSV vide."]
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return [], ["CSV vide."]
+
+    sample = "\n".join(lines[:10])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,	|")
+        delimiter = dialect.delimiter
+    except Exception:
+        delimiter = _detect_delimiter(sample)
+
+    reader = csv.DictReader(StringIO("\n".join(lines)), delimiter=delimiter)
+    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+    required = {"code", "label"}
+    if not required.issubset(set(headers)):
+        return [], ["Colonnes CSV requises: code, label (description/domain_* optionnelles)."]
+
+    rows = []
+    errors = []
+    for idx, row in enumerate(reader, start=2):
+        code = (row.get("code") or "").strip()
+        label = (row.get("label") or "").strip()
+        description = (row.get("description") or "").strip() or None
+        actif_raw = (row.get("actif") or "1").strip().lower()
+        active = actif_raw not in {"0", "false", "non", "no", "off"}
+
+        if not code and not label:
+            continue
+        if not code or not label:
+            errors.append(f"Ligne {idx}: code et label obligatoires.")
+            continue
+
+        rows.append({"code": code, "label": label, "description": description, "active": active})
+
+    if not rows and not errors:
+        errors.append("Aucune ligne de compétences valide trouvée.")
+    return rows, errors
 
 
 @bp.route("/referentiels/import", methods=["GET", "POST"])
 @login_required
 @require_perm("admin:rbac")
-def import_skills():
-    preset_code = (request.args.get("framework_code") or "").strip() or None
+def import_referentiel_csv():
+    framework_code = (request.values.get("framework_code") or "").strip()
+    framework_name = (request.values.get("framework_name") or "").strip()
 
     if request.method == "POST":
-        fw_code = (request.form.get("framework_code") or "").strip()
-        fw_name = (request.form.get("framework_name") or "").strip()
-        fw_version = (request.form.get("framework_version") or "").strip() or None
-        fw_lang = (request.form.get("framework_lang") or "").strip() or "fr"
-        source_url = (request.form.get("source_url") or "").strip() or None
+        framework_code = (request.form.get("framework_code") or "").strip()
+        framework_name = (request.form.get("framework_name") or "").strip()
 
-        f = request.files.get("csv_file")
-        if not fw_code or not fw_name or not f:
+        file_obj = (
+            request.files.get("csv")
+            or request.files.get("csv_file")
+            or request.files.get("file")
+            or request.files.get("upload")
+        )
+
+        if not framework_code or not framework_name or not file_obj or not file_obj.filename:
             flash("Champs manquants (code, nom, CSV).", "danger")
-            return redirect(url_for("admin.import_skills", framework_code=fw_code or ""))
+            return render_template(
+                "admin_referentiels_import.html",
+                framework_code=framework_code,
+                framework_name=framework_name,
+            )
 
-        # Enregistrer temporairement (Windows-friendly) puis lire en utf-8-sig
-        tmpdir = tempfile.mkdtemp(prefix="skills_import_")
-        filename = secure_filename(f.filename or "skills.csv")
-        csv_path = os.path.join(tmpdir, filename)
-        f.save(csv_path)
+        parsed, errors = _parse_framework_csv(file_obj.read())
+        if errors:
+            for e in errors[:10]:
+                flash(e, "danger")
+            if len(errors) > 10:
+                flash(f"... {len(errors)-10} erreur(s) supplémentaire(s).", "warning")
+            return render_template(
+                "admin_referentiels_import.html",
+                framework_code=framework_code,
+                framework_name=framework_name,
+            )
 
-        import csv as _csv
-
-        fw = Framework.query.filter_by(code=fw_code).first()
-        if not fw:
-            fw = Framework(code=fw_code, nom=fw_name, version=fw_version, lang=fw_lang, source_url=source_url, actif=True)
-            db.session.add(fw)
+        ref = Referentiel.query.filter_by(nom=framework_name).first()
+        if not ref:
+            ref = Referentiel(nom=framework_name, description=f"Import CSV ({framework_code})")
+            db.session.add(ref)
             db.session.flush()
-        else:
-            fw.nom = fw_name
-            fw.version = fw_version
-            fw.lang = fw_lang
-            fw.source_url = source_url
 
         created = 0
         updated = 0
-
-        with open(csv_path, "r", encoding="utf-8-sig", newline="") as fh:
-            reader = _csv.DictReader(fh)
-            required = {"code", "label"}
-            missing = required - set(reader.fieldnames or [])
-            if missing:
-                flash(f"CSV invalide : colonnes manquantes {sorted(missing)}", "danger")
-                return redirect(url_for("admin.import_skills", framework_code=fw_code))
-
-            for row in reader:
-                code = (row.get("code") or "").strip()
-                if not code:
-                    continue
-
-                sk = Skill.query.filter_by(framework_id=fw.id, code=code).first()
-                if not sk:
-                    sk = Skill(framework_id=fw.id, code=code, label=(row.get('label') or '').strip() or code)
-                    db.session.add(sk)
-                    created += 1
-                else:
-                    updated += 1
-
-                sk.label = (row.get("label") or "").strip() or sk.label
-                sk.description = (row.get("description") or "").strip() or None
-                sk.domain_code = (row.get("domain_code") or "").strip() or None
-                sk.domain_label = (row.get("domain_label") or "").strip() or None
-
-                so = (row.get("sort_order") or "").strip()
-                if so.isdigit():
-                    sk.sort_order = int(so)
-
-                actif_raw = (row.get("actif") or "").strip().lower()
-                if actif_raw in {"0", "false", "non", "n"}:
-                    sk.actif = False
-                elif actif_raw in {"1", "true", "oui", "o", "y", "yes"}:
-                    sk.actif = True
+        skipped_inactive = 0
+        for item in parsed:
+            if not item["active"]:
+                skipped_inactive += 1
+                continue
+            comp = Competence.query.filter_by(referentiel_id=ref.id, code=item["code"]).first()
+            if comp:
+                comp.nom = item["label"]
+                comp.description = item["description"]
+                updated += 1
+            else:
+                db.session.add(
+                    Competence(
+                        referentiel_id=ref.id,
+                        code=item["code"],
+                        nom=item["label"],
+                        description=item["description"],
+                    )
+                )
+                created += 1
 
         db.session.commit()
-        flash(f"Import OK : {created} créées, {updated} mises à jour (framework {fw.code}).", "success")
-        return redirect(url_for("admin.referentiels"))
+        flash(
+            f"Import terminé: {created} créée(s), {updated} mise(s) à jour, {skipped_inactive} inactive(s) ignorée(s).",
+            "success",
+        )
+        return redirect(url_for("pedagogie.referentiels_edit", referentiel_id=ref.id))
 
-    return render_template("admin_import_skills.html", preset_code=preset_code)
+    return render_template(
+        "admin_referentiels_import.html",
+        framework_code=framework_code,
+        framework_name=framework_name,
+    )
