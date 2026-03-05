@@ -1317,3 +1317,175 @@ try:
 except Exception:
     # On ne doit jamais empêcher l'app de démarrer pour un souci de compat.
     pass
+
+
+# ---------------------------------------------------------------------------
+# Référentiels de compétences (DigComp / Pix / CléA, etc.) + projets pédagogiques
+# ---------------------------------------------------------------------------
+#
+# Objectif:
+# - Importer des référentiels une seule fois (pas de saisie manuelle)
+# - Lier les ateliers à plusieurs projets (Option B)
+# - Tagger les compétences au niveau SESSION (ex: "Créer un mail") plutôt qu'au
+#   niveau atelier large (ex: "Numérique par tous")
+# - Évaluer par session de façon légère (NA / EN_COURS / ACQUIS)
+#
+# IMPORTANT : le passeport des habitants (PasseportNote / PasseportPieceJointe)
+# reste INCHANGÉ et non négociable. Les tables ci-dessous n'écrasent rien et
+# pourront ensuite alimenter le passeport via un pont/export.
+
+
+class Framework(db.Model):
+    __tablename__ = "framework"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    nom = db.Column(db.String(160), nullable=False)
+    version = db.Column(db.String(32), nullable=True)
+    lang = db.Column(db.String(8), nullable=True, default="fr")
+    source_url = db.Column(db.String(512), nullable=True)
+    actif = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    skills = db.relationship("Skill", backref="framework", lazy=True)
+
+    def __repr__(self):
+        return f"<Framework {self.code} {self.version or ''}>"
+
+
+class Skill(db.Model):
+    __tablename__ = "skill"
+    __table_args__ = (
+        db.UniqueConstraint("framework_id", "code", name="uq_skill_framework_code"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    framework_id = db.Column(db.Integer, db.ForeignKey("framework.id"), nullable=False, index=True)
+    code = db.Column(db.String(64), nullable=False, index=True)
+    label = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    domain_code = db.Column(db.String(32), nullable=True, index=True)
+    domain_label = db.Column(db.String(255), nullable=True)
+    sort_order = db.Column(db.Integer, nullable=True)
+    actif = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Skill {self.framework_id}:{self.code}>"
+
+
+class LearningProject(db.Model):
+    __tablename__ = "learning_project"
+
+    id = db.Column(db.Integer, primary_key=True)
+    titre = db.Column(db.String(255), nullable=False, index=True)
+    description = db.Column(db.Text, nullable=True)
+    date_debut = db.Column(db.Date, nullable=True)
+    date_fin = db.Column(db.Date, nullable=True)
+    public_cible = db.Column(db.String(255), nullable=True)
+    framework_id_default = db.Column(db.Integer, db.ForeignKey("framework.id"), nullable=True, index=True)
+    seuil_reussite = db.Column(db.Float, nullable=False, default=0.6)
+    actif = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True, index=True)
+
+    framework_default = db.relationship("Framework", foreign_keys=[framework_id_default])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+    def __repr__(self):
+        return f"<LearningProject {self.id} {self.titre}>"
+
+
+class LearningProjectSkill(db.Model):
+    __tablename__ = "learning_project_skill"
+    __table_args__ = (
+        db.UniqueConstraint("project_id", "skill_id", name="uq_learning_project_skill"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("learning_project.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_id = db.Column(db.Integer, db.ForeignKey("skill.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_level = db.Column(db.String(32), nullable=True)
+    poids = db.Column(db.Float, nullable=False, default=1.0)
+    obligatoire = db.Column(db.Boolean, nullable=False, default=False)
+    notes = db.Column(db.Text, nullable=True)
+    actif = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    project = db.relationship("LearningProject", backref=db.backref("skills", lazy=True, cascade="all, delete-orphan"))
+    skill = db.relationship("Skill")
+
+
+class AtelierProject(db.Model):
+    __tablename__ = "atelier_project"
+    __table_args__ = (
+        db.PrimaryKeyConstraint("atelier_id", "project_id"),
+    )
+
+    atelier_id = db.Column(db.Integer, db.ForeignKey("atelier_activite.id", ondelete="CASCADE"), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey("learning_project.id", ondelete="CASCADE"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    atelier = db.relationship("AtelierActivite", backref=db.backref("projects", lazy=True, cascade="all, delete-orphan"))
+    project = db.relationship("LearningProject", backref=db.backref("ateliers", lazy=True))
+
+
+class SessionSkill(db.Model):
+    __tablename__ = "session_skill"
+    __table_args__ = (
+        db.PrimaryKeyConstraint("session_id", "skill_id"),
+    )
+
+    session_id = db.Column(db.Integer, db.ForeignKey("session_activite.id", ondelete="CASCADE"), nullable=False)
+    skill_id = db.Column(db.Integer, db.ForeignKey("skill.id", ondelete="CASCADE"), nullable=False)
+    expected_level = db.Column(db.String(32), nullable=True)
+    coverage = db.Column(db.Float, nullable=False, default=1.0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    session = db.relationship("SessionActivite", backref=db.backref("skills", lazy=True, cascade="all, delete-orphan"))
+    skill = db.relationship("Skill")
+
+
+class SessionAssessment(db.Model):
+    __tablename__ = "session_assessment"
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey("session_activite.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id = db.Column(db.Integer, db.ForeignKey("learning_project.id", ondelete="SET NULL"), nullable=True, index=True)
+    method = db.Column(db.String(32), nullable=False, default="OBSERVATION")
+    notes = db.Column(db.Text, nullable=True)
+    assessed_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    assessed_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True, index=True)
+
+    session = db.relationship("SessionActivite")
+    project = db.relationship("LearningProject")
+    assessed_by = db.relationship("User")
+
+
+class SessionAssessmentSkill(db.Model):
+    __tablename__ = "session_assessment_skill"
+    __table_args__ = (
+        db.UniqueConstraint("session_assessment_id", "skill_id", name="uq_session_assessment_skill"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_assessment_id = db.Column(
+        db.Integer,
+        db.ForeignKey("session_assessment.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    skill_id = db.Column(db.Integer, db.ForeignKey("skill.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # NA / EN_COURS / ACQUIS
+    result = db.Column(db.String(16), nullable=False, default="EN_COURS", index=True)
+    score = db.Column(db.Integer, nullable=True)
+    observed_level = db.Column(db.String(32), nullable=True)
+    comment = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    assessment = db.relationship(
+        "SessionAssessment",
+        backref=db.backref("results", lazy=True, cascade="all, delete-orphan"),
+    )
+    skill = db.relationship("Skill")

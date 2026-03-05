@@ -314,6 +314,8 @@
               <a class="pill {% if ep.startswith('admin.users') %}active{% endif %}" href="{{ url_for('admin.users') }}">Équipe</a>
               {% if can('admin:rbac') %}
                 <a class="pill {% if ep.startswith('admin.droits') %}active{% endif %}" href="{{ url_for('admin.droits') }}">Droits</a>
+              <a class="dropdown-item" href="{{ url_for('admin.referentiels') }}">Référentiels</a>
+
                 <a class="pill {% if ep.startswith('admin.instance_settings') %}active{% endif %}" href="{{ url_for('admin.instance_settings') }}">Identité app</a>
               {% endif %}
               {% if can('secteurs:edit') %}
