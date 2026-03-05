@@ -47,6 +47,91 @@ def _normalize_note_category(raw: str | None) -> str:
     return val if val in PASSPORT_NOTE_CATEGORIES else "journal"
 
 
+def _pick_csv_delimiter(sample: str) -> str:
+    """Choisit un séparateur probable quand le sniff auto échoue."""
+    candidates = [";", ",", "	", "|"]
+    scores = {c: sample.count(c) for c in candidates}
+    return max(scores, key=scores.get)
+
+
+def _parse_competences_csv(raw_bytes: bytes):
+    """Parse un CSV de compétences avec tolérance de format.
+
+    Formats acceptés:
+    - avec en-tête: code, nom, description (plus alias FR courants)
+    - sans en-tête: col1=code, col2=nom, col3=description(optionnelle)
+    Séparateurs: ; , tab, |
+    """
+    if not raw_bytes:
+        return [], ["Fichier vide."]
+
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw_bytes.decode("latin-1")
+
+    if not text.strip():
+        return [], ["Fichier vide."]
+
+    sample = "\n".join(text.splitlines()[:10])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,	|")
+        delimiter = dialect.delimiter
+    except Exception:
+        delimiter = _pick_csv_delimiter(sample)
+
+    rows = list(csv.reader(StringIO(text), delimiter=delimiter))
+    rows = [r for r in rows if any((c or "").strip() for c in r)]
+    if not rows:
+        return [], ["Aucune ligne exploitable détectée."]
+
+    def norm(v: str) -> str:
+        return (v or "").strip().lower().replace("é", "e").replace("è", "e").replace("ê", "e")
+
+    header = [norm(c) for c in rows[0]]
+    aliases = {
+        "code": {"code", "competence_code", "id", "reference"},
+        "nom": {"nom", "libelle", "intitule", "competence", "competence_nom", "name"},
+        "description": {"description", "desc", "details", "commentaire", "notes"},
+    }
+
+    idx_code = idx_nom = idx_desc = None
+    for i, col in enumerate(header):
+        if col in aliases["code"]:
+            idx_code = i
+        elif col in aliases["nom"]:
+            idx_nom = i
+        elif col in aliases["description"]:
+            idx_desc = i
+
+    has_header = (idx_code is not None and idx_nom is not None)
+
+    parsed = []
+    errors = []
+    start = 1 if has_header else 0
+
+    for n, row in enumerate(rows[start:], start=start + 1):
+        if has_header:
+            code = (row[idx_code] if idx_code < len(row) else "").strip()
+            nom = (row[idx_nom] if idx_nom < len(row) else "").strip()
+            description = (row[idx_desc] if (idx_desc is not None and idx_desc < len(row)) else "").strip() or None
+        else:
+            code = (row[0] if len(row) > 0 else "").strip()
+            nom = (row[1] if len(row) > 1 else "").strip()
+            description = (row[2] if len(row) > 2 else "").strip() or None
+
+        if not code and not nom:
+            continue
+        if not code or not nom:
+            errors.append(f"Ligne {n}: code et nom sont obligatoires.")
+            continue
+        parsed.append({"code": code, "nom": nom, "description": description})
+
+    if not parsed and not errors:
+        errors.append("Aucune compétence valide trouvée dans le fichier.")
+    return parsed, errors
+
+
 # ============================================================
 # Référentiels
 # ============================================================
@@ -126,6 +211,43 @@ def referentiels_edit(referentiel_id: int):
             db.session.delete(comp)
             db.session.commit()
             flash("Compétence supprimée.", "warning")
+            return redirect(url_for("pedagogie.referentiels_edit", referentiel_id=referentiel.id))
+
+        if action == "import_competences_csv":
+            f = request.files.get("csv_file")
+            if not f or not f.filename:
+                flash("Choisis un fichier CSV à importer.", "danger")
+                return redirect(url_for("pedagogie.referentiels_edit", referentiel_id=referentiel.id))
+
+            parsed, errors = _parse_competences_csv(f.read())
+            if errors:
+                for err in errors[:10]:
+                    flash(err, "danger")
+                if len(errors) > 10:
+                    flash(f"... {len(errors) - 10} erreur(s) supplémentaire(s).", "warning")
+                return redirect(url_for("pedagogie.referentiels_edit", referentiel_id=referentiel.id))
+
+            created = 0
+            updated = 0
+            for item in parsed:
+                existing = Competence.query.filter_by(referentiel_id=referentiel.id, code=item["code"]).first()
+                if existing:
+                    existing.nom = item["nom"]
+                    existing.description = item["description"]
+                    updated += 1
+                else:
+                    db.session.add(
+                        Competence(
+                            referentiel_id=referentiel.id,
+                            code=item["code"],
+                            nom=item["nom"],
+                            description=item["description"],
+                        )
+                    )
+                    created += 1
+
+            db.session.commit()
+            flash(f"Import CSV terminé: {created} créée(s), {updated} mise(s) à jour.", "success")
             return redirect(url_for("pedagogie.referentiels_edit", referentiel_id=referentiel.id))
 
     competences = Competence.query.filter_by(referentiel_id=referentiel.id).order_by(Competence.code.asc()).all()

@@ -35,9 +35,6 @@ from app.models import (
     Projet,
     PasseportNote,
     SessionScheduleEditLog,
-    Framework,
-    Skill,
-    SessionSkill,
 )
 
 from ..rbac import require_perm
@@ -922,125 +919,6 @@ def session_edit_schedule(session_id: int):
         session=s,
         edits=edits,
     )
-
-
-# ------------------ Compétences (tag au niveau SESSION) ------------------
-
-
-@bp.route("/session/<int:session_id>/skills", methods=["GET"])
-@login_required
-def session_skills(session_id: int):
-    """Associer des compétences (Skill) à une session (unité pédagogique)."""
-    secteur = _user_secteur()
-    s = SessionActivite.query.get_or_404(session_id)
-    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
-
-    if s.is_deleted or atelier.is_deleted:
-        flash("Cette session/atelier est dans la corbeille.", "warning")
-        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
-    if not _is_admin_global() and s.secteur != secteur:
-        flash("Accès refusé.", "danger")
-        return redirect(url_for("activite.index"))
-
-    framework_id = request.args.get("framework_id", type=int)
-    q = (request.args.get("q") or "").strip()
-
-    frameworks = Framework.query.filter(Framework.actif.is_(True)).order_by(Framework.nom.asc()).all()
-    fw_map = {fw.id: fw for fw in frameworks}
-    if framework_id is None and frameworks:
-        framework_id = frameworks[0].id
-
-    current = (
-        Skill.query.join(SessionSkill, SessionSkill.skill_id == Skill.id)
-        .filter(SessionSkill.session_id == s.id)
-        .order_by(Skill.framework_id.asc(), Skill.code.asc())
-        .all()
-    )
-    current_ids = {sk.id for sk in current}
-
-    results = []
-    if q:
-        sq = Skill.query.filter(Skill.actif.is_(True))
-        if framework_id:
-            sq = sq.filter(Skill.framework_id == framework_id)
-        like = f"%{q}%"
-        sq = sq.filter((Skill.code.ilike(like)) | (Skill.label.ilike(like)))
-        results = sq.order_by(Skill.code.asc()).limit(60).all()
-
-    return render_template(
-        "activite/session_skills.html",
-        secteur=secteur,
-        atelier=atelier,
-        session=s,
-        frameworks=frameworks,
-        fw_map=fw_map,
-        framework_id=framework_id,
-        q=q,
-        current=current,
-        current_ids=current_ids,
-        results=results,
-    )
-
-
-@bp.route("/session/<int:session_id>/skills/add", methods=["POST"])
-@login_required
-def session_skill_add(session_id: int):
-    secteur = _user_secteur()
-    s = SessionActivite.query.get_or_404(session_id)
-    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
-
-    if s.is_deleted or atelier.is_deleted:
-        flash("Cette session/atelier est dans la corbeille.", "warning")
-        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
-    if not _is_admin_global() and s.secteur != secteur:
-        flash("Accès refusé.", "danger")
-        return redirect(url_for("activite.index"))
-
-    skill_id = request.form.get("skill_id", type=int)
-    if not skill_id:
-        flash("Compétence manquante.", "warning")
-        return redirect(url_for("activite.session_skills", session_id=s.id))
-
-    sk = Skill.query.get_or_404(skill_id)
-    exists = SessionSkill.query.filter_by(session_id=s.id, skill_id=sk.id).first()
-    if not exists:
-        db.session.add(SessionSkill(session_id=s.id, skill_id=sk.id))
-        db.session.commit()
-        flash("Compétence ajoutée à la session.", "success")
-    else:
-        flash("Déjà présente.", "info")
-
-    framework_id = request.form.get("framework_id", type=int)
-    q = (request.form.get("q") or "").strip()
-    return redirect(url_for("activite.session_skills", session_id=s.id, framework_id=framework_id, q=q))
-
-
-@bp.route("/session/<int:session_id>/skills/remove", methods=["POST"])
-@login_required
-def session_skill_remove(session_id: int):
-    secteur = _user_secteur()
-    s = SessionActivite.query.get_or_404(session_id)
-    atelier = AtelierActivite.query.get_or_404(s.atelier_id)
-
-    if s.is_deleted or atelier.is_deleted:
-        flash("Cette session/atelier est dans la corbeille.", "warning")
-        return redirect(url_for("activite.sessions", atelier_id=atelier.id, corbeille=1))
-    if not _is_admin_global() and s.secteur != secteur:
-        flash("Accès refusé.", "danger")
-        return redirect(url_for("activite.index"))
-
-    skill_id = request.form.get("skill_id", type=int)
-    if not skill_id:
-        flash("Compétence manquante.", "warning")
-        return redirect(url_for("activite.session_skills", session_id=s.id))
-
-    SessionSkill.query.filter_by(session_id=s.id, skill_id=skill_id).delete()
-    db.session.commit()
-    flash("Compétence retirée.", "success")
-
-    framework_id = request.form.get("framework_id", type=int)
-    q = (request.form.get("q") or "").strip()
-    return redirect(url_for("activite.session_skills", session_id=s.id, framework_id=framework_id, q=q))
 
 
 # ------------------ Évaluation (grille batch) ------------------
