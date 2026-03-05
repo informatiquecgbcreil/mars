@@ -64,6 +64,28 @@ def _check_test_users() -> None:
         raise RuntimeError("Utilisateurs de test manquants: " + ", ".join(missing))
 
 
+
+
+def _check_admin_pages(client) -> None:
+    admin = User.query.filter_by(email="admin.test@mars.local").first()
+    if not admin:
+        raise RuntimeError("Impossible de tester /admin/*: admin.test@mars.local absent")
+
+    with client.session_transaction() as sess:
+        sess["_user_id"] = str(admin.id)
+        sess["_fresh"] = True
+
+    critical_admin_urls = [
+        "/admin/users",
+        "/admin/droits",
+        "/admin/instance",
+        "/admin/referentiels/import",
+    ]
+    for url in critical_admin_urls:
+        resp = client.get(url)
+        if resp.status_code >= 500 or resp.status_code == 404:
+            raise RuntimeError(f"Page admin KO: {url} (status={resp.status_code})")
+
 def _check_password_reset_flow(client) -> None:
     if client.get("/password-reset").status_code != 200:
         raise RuntimeError("Route /password-reset indisponible")
@@ -90,6 +112,11 @@ def main() -> int:
         action="store_true",
         help="Vérifie les routes de récupération de mot de passe.",
     )
+    parser.add_argument(
+        "--check-admin-pages",
+        action="store_true",
+        help="Vérifie les pages critiques /admin avec un compte admin de test.",
+    )
     args = parser.parse_args()
 
     app = create_app()
@@ -110,6 +137,8 @@ def main() -> int:
             _check_test_users()
         if args.check_password_reset:
             _check_password_reset_flow(client)
+        if args.check_admin_pages:
+            _check_admin_pages(client)
 
     print("[OK] reliability checks passed")
     return 0
