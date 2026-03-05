@@ -59,6 +59,7 @@
                 <td>
                   {% if not corbeille %}
                     <a class="btn" href="{{ url_for('activite.emargement', session_id=s.id) }}">Ouvrir</a>
+                    <a class="btn" href="{{ url_for('activite.session_edit_schedule', session_id=s.id) }}">Corriger date/heure</a>
                     {% if can('questionnaires:respond') %}
                       <a class="btn" href="{{ url_for('questionnaires.respond', session_id=s.id) }}">Questionnaire</a>
                     {% endif %}

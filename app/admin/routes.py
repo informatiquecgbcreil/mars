@@ -1,11 +1,13 @@
+import csv
 import os
 import tempfile
+from io import StringIO
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort, current_app, jsonify
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 
 from app.extensions import db
-from app.models import User, Role, Permission, Secteur, InstanceSettings
+from app.models import User, Role, Permission, Secteur, InstanceSettings, Referentiel, Competence
 from app.rbac import require_perm
 from app.services.storage import ensure_upload_subdir, media_relpath
 from app.ateliers.excel_import import import_presences_from_xlsx
@@ -353,12 +355,36 @@ def instance_settings():
     if request.method == "POST":
         app_name = (request.form.get("app_name") or "").strip()
         org_name = (request.form.get("organization_name") or "").strip()
+        public_base_url = (request.form.get("public_base_url") or "").strip() or None
+
+        smtp_host = (request.form.get("smtp_host") or "").strip() or None
+        smtp_port_raw = (request.form.get("smtp_port") or "").strip()
+        smtp_port = int(smtp_port_raw) if smtp_port_raw.isdigit() else None
+        smtp_username = (request.form.get("smtp_username") or "").strip() or None
+        smtp_password = (request.form.get("smtp_password") or "").strip() or None
+        smtp_sender = (request.form.get("smtp_sender") or "").strip() or None
+        smtp_use_tls = request.form.get("smtp_use_tls") in {"1", "true", "on", "yes", "YES"}
+
+        if smtp_host and (not smtp_port or smtp_port <= 0):
+            flash("Port SMTP invalide.", "danger")
+            return redirect(url_for("admin.instance_settings"))
+        if smtp_host and not smtp_sender:
+            flash("Adresse expéditeur SMTP requise.", "danger")
+            return redirect(url_for("admin.instance_settings"))
 
         if not row.id:
             db.session.add(row)
 
         row.app_name = app_name or None
         row.organization_name = org_name or None
+        row.public_base_url = public_base_url
+        row.smtp_host = smtp_host
+        row.smtp_port = smtp_port
+        row.smtp_username = smtp_username
+        if smtp_password:
+            row.smtp_password = smtp_password
+        row.smtp_sender = smtp_sender
+        row.smtp_use_tls = smtp_use_tls if smtp_host else None
 
         logo_dir = ensure_upload_subdir("branding")
 
@@ -428,3 +454,138 @@ def import_excel():
             os.rmdir(tmpdir)
         except Exception:
             pass
+
+
+def _detect_delimiter(sample: str) -> str:
+    candidates = [";", ",", "	", "|"]
+    counts = {c: sample.count(c) for c in candidates}
+    return max(counts, key=counts.get)
+
+
+def _parse_framework_csv(raw: bytes):
+    if not raw:
+        return [], ["CSV vide."]
+
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return [], ["CSV vide."]
+
+    sample = "\n".join(lines[:10])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=";,	|")
+        delimiter = dialect.delimiter
+    except Exception:
+        delimiter = _detect_delimiter(sample)
+
+    reader = csv.DictReader(StringIO("\n".join(lines)), delimiter=delimiter)
+    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+    required = {"code", "label"}
+    if not required.issubset(set(headers)):
+        return [], ["Colonnes CSV requises: code, label (description/domain_* optionnelles)."]
+
+    rows = []
+    errors = []
+    for idx, row in enumerate(reader, start=2):
+        code = (row.get("code") or "").strip()
+        label = (row.get("label") or "").strip()
+        description = (row.get("description") or "").strip() or None
+        actif_raw = (row.get("actif") or "1").strip().lower()
+        active = actif_raw not in {"0", "false", "non", "no", "off"}
+
+        if not code and not label:
+            continue
+        if not code or not label:
+            errors.append(f"Ligne {idx}: code et label obligatoires.")
+            continue
+
+        rows.append({"code": code, "label": label, "description": description, "active": active})
+
+    if not rows and not errors:
+        errors.append("Aucune ligne de compétences valide trouvée.")
+    return rows, errors
+
+
+@bp.route("/referentiels/import", methods=["GET", "POST"])
+@login_required
+@require_perm("admin:rbac")
+def import_referentiel_csv():
+    framework_code = (request.values.get("framework_code") or "").strip()
+    framework_name = (request.values.get("framework_name") or "").strip()
+
+    if request.method == "POST":
+        framework_code = (request.form.get("framework_code") or "").strip()
+        framework_name = (request.form.get("framework_name") or "").strip()
+
+        file_obj = (
+            request.files.get("csv")
+            or request.files.get("csv_file")
+            or request.files.get("file")
+            or request.files.get("upload")
+        )
+
+        if not framework_code or not framework_name or not file_obj or not file_obj.filename:
+            flash("Champs manquants (code, nom, CSV).", "danger")
+            return render_template(
+                "admin_referentiels_import.html",
+                framework_code=framework_code,
+                framework_name=framework_name,
+            )
+
+        parsed, errors = _parse_framework_csv(file_obj.read())
+        if errors:
+            for e in errors[:10]:
+                flash(e, "danger")
+            if len(errors) > 10:
+                flash(f"... {len(errors)-10} erreur(s) supplémentaire(s).", "warning")
+            return render_template(
+                "admin_referentiels_import.html",
+                framework_code=framework_code,
+                framework_name=framework_name,
+            )
+
+        ref = Referentiel.query.filter_by(nom=framework_name).first()
+        if not ref:
+            ref = Referentiel(nom=framework_name, description=f"Import CSV ({framework_code})")
+            db.session.add(ref)
+            db.session.flush()
+
+        created = 0
+        updated = 0
+        skipped_inactive = 0
+        for item in parsed:
+            if not item["active"]:
+                skipped_inactive += 1
+                continue
+            comp = Competence.query.filter_by(referentiel_id=ref.id, code=item["code"]).first()
+            if comp:
+                comp.nom = item["label"]
+                comp.description = item["description"]
+                updated += 1
+            else:
+                db.session.add(
+                    Competence(
+                        referentiel_id=ref.id,
+                        code=item["code"],
+                        nom=item["label"],
+                        description=item["description"],
+                    )
+                )
+                created += 1
+
+        db.session.commit()
+        flash(
+            f"Import terminé: {created} créée(s), {updated} mise(s) à jour, {skipped_inactive} inactive(s) ignorée(s).",
+            "success",
+        )
+        return redirect(url_for("pedagogie.referentiels_edit", referentiel_id=ref.id))
+
+    return render_template(
+        "admin_referentiels_import.html",
+        framework_code=framework_code,
+        framework_name=framework_name,
+    )

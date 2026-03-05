@@ -268,6 +268,8 @@ def _resolve_secteur_scope(flt: StatsFilters) -> Optional[str]:
 def _apply_common_filters(query, flt: StatsFilters):
     query = query.filter(SessionActivite.is_deleted.is_(False))
     query = query.filter(AtelierActivite.is_deleted.is_(False))
+    if not flt.atelier_id:
+        query = query.filter(AtelierActivite.is_active.is_(True))
 
     eff_secteur = _resolve_secteur_scope(flt)
     if eff_secteur:
@@ -290,6 +292,8 @@ def _query_sessions_for_period(flt: StatsFilters, date_from: Optional[date], dat
     )
     query = query.filter(SessionActivite.is_deleted.is_(False))
     query = query.filter(AtelierActivite.is_deleted.is_(False))
+    if not flt.atelier_id:
+        query = query.filter(AtelierActivite.is_active.is_(True))
 
     eff_secteur = _resolve_secteur_scope(flt)
     if eff_secteur:
@@ -306,9 +310,14 @@ def _query_sessions_for_period(flt: StatsFilters, date_from: Optional[date], dat
     return query
 
 
+
 # ---------------------------
 # Main compute (Phase 1)
 # ---------------------------
+
+def _continuity_group_id(atelier: AtelierActivite) -> int:
+    return int(getattr(atelier, "continuity_parent_id", None) or atelier.id)
+
 
 def compute_volume_activity_stats(flt: StatsFilters) -> Dict[str, Any]:
     sessions_rows: List[Tuple[SessionActivite, AtelierActivite]] = _query_sessions_for_period(
@@ -368,12 +377,13 @@ def compute_volume_activity_stats(flt: StatsFilters) -> Dict[str, Any]:
 
     per_atelier: Dict[int, Dict[str, Any]] = {}
     for session, atelier in sessions_rows:
-        aid = atelier.id
-        if aid not in per_atelier:
-            per_atelier[aid] = {
-                "atelier_id": aid,
+        gid = _continuity_group_id(atelier)
+        if gid not in per_atelier:
+            per_atelier[gid] = {
+                "atelier_id": gid,
                 "secteur": atelier.secteur,
                 "nom": atelier.nom,
+                "alias_noms": set(),
                 "type_atelier": getattr(atelier, "type_atelier", None),
                 "sessions_planned": 0,
                 "sessions_real": 0,
@@ -389,38 +399,39 @@ def compute_volume_activity_stats(flt: StatsFilters) -> Dict[str, Any]:
                 "dates": [],
             }
 
-        per_atelier[aid]["sessions"] += 1
-        per_atelier[aid]["sessions_planned"] += 1
+        per_atelier[gid]["alias_noms"].add(atelier.nom)
+        per_atelier[gid]["sessions"] += 1
+        per_atelier[gid]["sessions_planned"] += 1
 
         is_real = (session.statut or "").lower() != "annulee"
         if is_real:
-            per_atelier[aid]["sessions_real"] += 1
+            per_atelier[gid]["sessions_real"] += 1
         session_date = session.rdv_date or session.date_session
         if session_date:
-            per_atelier[aid]["dates"].append(session_date)
+            per_atelier[gid]["dates"].append(session_date)
 
         mins = _session_duration_minutes(session, atelier)
         if mins <= 0:
             continue
         h = mins / 60.0
         hours_animator += h
-        per_atelier[aid]["hours_animator"] += h
-        per_atelier[aid]["planned_hours"] += h
+        per_atelier[gid]["hours_animator"] += h
+        per_atelier[gid]["planned_hours"] += h
         if is_real:
-            per_atelier[aid]["real_hours"] += h
+            per_atelier[gid]["real_hours"] += h
 
         count_p = pres_by_session.get(session.id, 0)
         if (session.session_type or "").upper() == "COLLECTIF":
             hours_people += h * float(count_p)
-            per_atelier[aid]["hours_people"] += h * float(count_p)
+            per_atelier[gid]["hours_people"] += h * float(count_p)
         else:
             if count_p > 0:
                 hours_people += h
-                per_atelier[aid]["hours_people"] += h
+                per_atelier[gid]["hours_people"] += h
         cap = session.capacite if session.capacite is not None else getattr(atelier, "capacite_defaut", 0) or 0
-        per_atelier[aid]["planned_capacity"] += int(cap or 0)
+        per_atelier[gid]["planned_capacity"] += int(cap or 0)
         if is_real:
-            per_atelier[aid]["real_capacity"] += int(cap or 0)
+            per_atelier[gid]["real_capacity"] += int(cap or 0)
 
     activity_duration_days = None
     if sessions_rows:
@@ -499,7 +510,7 @@ def compute_volume_activity_stats(flt: StatsFilters) -> Dict[str, Any]:
         heat[day_label][bucket] += 1
 
     # Per-atelier presences + uniques
-    session_to_atelier = {s.id: a.id for s, a in sessions_rows}
+    session_to_atelier = {s.id: _continuity_group_id(a) for s, a in sessions_rows}
     for p in presences:
         aid = session_to_atelier.get(p.session_id)
         if not aid or aid not in per_atelier:
@@ -518,6 +529,7 @@ def compute_volume_activity_stats(flt: StatsFilters) -> Dict[str, Any]:
                 "atelier_id": aid,
                 "secteur": obj["secteur"],
                 "nom": obj["nom"],
+                "alias_noms": sorted(obj.get("alias_noms", set())),
                 "type_atelier": obj["type_atelier"],
                 "sessions": int(obj["sessions"]),
                 "presences": int(obj["presences"]),

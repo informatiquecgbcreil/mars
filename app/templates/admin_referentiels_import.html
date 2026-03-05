@@ -1,0 +1,34 @@
+{% extends 'layout.html' %}
+
+{% block body %}
+<div class="stack">
+  <div class="card">
+    <h1 style="margin-top:0;">Importer un référentiel (CSV)</h1>
+    <div class="muted">Format attendu : <code>code,label,description,domain_code,domain_label,sort_order,actif</code></div>
+
+    <form method="post" enctype="multipart/form-data" style="margin-top:12px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label>Code référentiel</label>
+      <input class="in" type="text" name="framework_code" value="{{ framework_code or '' }}" required>
+
+      <label>Nom référentiel</label>
+      <input class="in" type="text" name="framework_name" value="{{ framework_name or '' }}" required>
+
+      <label>CSV</label>
+      <input class="in" type="file" name="csv" accept=".csv,text/csv" required>
+
+      <div class="row" style="gap:10px; margin-top:12px;">
+        <button class="btn" type="submit">Importer</button>
+        <a class="btn" href="{{ url_for('pedagogie.referentiels_list') }}">Retour référentiels</a>
+      </div>
+    </form>
+
+    <div class="spacer"></div>
+    <h3>Exemple</h3>
+    <pre style="white-space:pre-wrap;">code,label,description,domain_code,domain_label,sort_order,actif
+2.1,Interagir via des technologies numériques,,2,Communication et collaboration,1,1
+2.2,Partager via des technologies numériques,,2,Communication et collaboration,2,1</pre>
+  </div>
+</div>
+{% endblock %}
